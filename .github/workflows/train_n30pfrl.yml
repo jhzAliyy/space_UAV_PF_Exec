@@ -1,0 +1,63 @@
+name: train-n30pfrl
+on:
+  workflow_dispatch:
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {scene: flow,  n: 30, mode: pfrl}
+          - {scene: burst, n: 30, mode: pfrl}
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        shell: bash
+        run: |
+          python -m pip install -U pip
+          pip install numpy gymnasium
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install mujoco
+
+      - name: Build C cores
+        shell: bash
+        run: |
+          cd code
+          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+          g++ -O3 -fopenmp -shared -fPIC crowd_sfm.cpp -o crowd_sfm.so -I shim -I ../deps/lightsfm/include
+
+      - name: Import smoke test
+        shell: bash
+        run: |
+          cd code
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          python -c "import uav_env, pfrl; print('IMPORT_OK')"
+
+      - name: Train
+        shell: bash
+        run: |
+          cd code
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
+          PF_CHANNEL=umi PF_SHADOW_DB=random PF_DXY_MAX=0.5 \
+            python ${{ matrix.mode }}.py --mode ${{ matrix.mode }} --tau 5 \
+            --seed 0 --scene ${{ matrix.scene }} --n-uav ${{ matrix.n }} \
+            --total-rollouts 1200 --fresh 2>&1 | tee train_${{ matrix.scene }}_n${{ matrix.n }}_${{ matrix.mode }}.log
+
+      - name: Upload ckpt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ckpt_${{ matrix.scene }}_n${{ matrix.n }}_${{ matrix.mode }}
+          path: |
+            code/ckpt/
+            code/train_*.log
+          if-no-files-found: warn
