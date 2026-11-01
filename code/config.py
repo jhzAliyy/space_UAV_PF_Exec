@@ -24,6 +24,7 @@ PI_MIN, PI_MAX = -3.0, 3.0
 CKPT_EVERY = 25
 TOTAL_ROLLOUTS = 1200
 EARLY_WIN = 200
+EARLY_SHORT = 10          # 早停：近 10 轮均值 vs 近 200 轮均值
 EARLY_THR = 0.005
 
 # ---- 执行器速度下限（2026-11-01 规模负效应修复，实测依据见

@@ -33,7 +33,7 @@ from config import SIG_LO
 from field import GlobalField
 from replay import ReplayBuffer
 from uav_env import (CKPT_EVERY, DB_MAX, DEMAND_SCALE_ANCHOR, DP_MAX,
-                     DPI_MAX, EARLY_THR, EARLY_WIN, EPISODE_LEN,
+                     DPI_MAX, EARLY_SHORT, EARLY_THR, EARLY_WIN, EPISODE_LEN,
                      N0_DBM, OBS_DIM, OBS_NORM, P_REF_DBM, PF_RELAX,
                      SIG_DIM, TOTAL_ROLLOUTS, U_STAR_DEFAULT, CKPT_ROOT,
                      UAVEnvV3, baseline_scene)
@@ -79,6 +79,7 @@ class Args:
     # ---- 训练设施 ----
     ckpt_every: int = CKPT_EVERY
     early_win: int = EARLY_WIN
+    early_short: int = EARLY_SHORT
     early_thr: float = EARLY_THR
     device: str = "cpu"
     fresh: bool = False
@@ -500,19 +501,21 @@ def train(args: Args) -> Path:
                   f"learn={n_learn} {(time.time()-t0)/60:.1f}min", flush=True)
         ret_r = float(np.mean(rets[-args.rollout_len:]))
         ret_hist.append(ret_r)
-        # 早停：真滑动窗（每 25 轮滑一次），历史从日志重建。
+        # 早停：近 S 轮均值 vs 近 W 轮均值。
+        # 只有两者相差在 ±EARLY_THR 内（无提升、也无明显退化）才停；
+        # 近 S 轮明显低于近 W 轮 = 崩溃，继续训练，不许早停。
         W = args.early_win
+        S = args.early_short
         t = ro + 1
         if t % 25 == 0 and t >= 2 * W:
-            w_now = float(np.mean(ret_hist[t - W:t]))
-            w_prev = float(np.mean(ret_hist[t - W - 25:t - 25]))
-            best_w = max(float(np.mean(ret_hist[i:i + W]))
-                         for i in range(0, t - W + 1))
-            if (abs(w_now - w_prev) <= args.early_thr * max(abs(w_prev), 1e-6)
-                    and w_now >= best_w - args.early_thr * max(abs(best_w), 1e-6)):
-                print(f"[{task}] 早停@{ro+1}轮 滑动窗|{w_now:.4f}-{w_prev:.4f}|"
-                      f"<{args.early_thr:.1%} 且达历史最佳窗口 {best_w:.4f}",
-                      flush=True)
+            short = float(np.mean(ret_hist[-S:]))
+            long = float(np.mean(ret_hist[-W:]))
+            diff = short - long
+            band = args.early_thr * max(abs(long), 1e-6)
+            if abs(diff) <= band:
+                print(f"[{task}] 早停@{ro+1}轮 近{S}轮={short:.4f} "
+                      f"近{W}轮={long:.4f} 差={diff:+.4f} "
+                      f"|差|<{args.early_thr:.1%} 无提升", flush=True)
                 save(ro)
                 (tdir / "progress.json").write_text(json.dumps({
                     "task": task, "rollout": ro + 1, "total": total,
@@ -543,6 +546,7 @@ def parse_args() -> Args:
     ap.add_argument("--task", default=d.task)
     ap.add_argument("--fresh", action="store_true")
     ap.add_argument("--early-win", type=int, default=d.early_win)
+    ap.add_argument("--early-short", type=int, default=d.early_short)
     ap.add_argument("--early-thr", type=float, default=d.early_thr)
     ap.add_argument("--eta-fixed", type=float, default=d.eta_fixed)
     ap.add_argument("--field-mode", default=d.field_mode,
@@ -558,6 +562,8 @@ def parse_args() -> Args:
     d.t_comm, d.anchor = a.tcomm, a.anchor
     d.total_rollouts, d.u_star = a.total_rollouts, a.u_star
     d.task, d.fresh = a.task or "", a.fresh
+    d.early_win, d.early_short, d.early_thr = (
+        a.early_win, a.early_short, a.early_thr)
     d.eta_fixed = a.eta_fixed
     d.field_mode, d.map_name = a.field_mode, a.map
     d.with_pos = not a.no_pos

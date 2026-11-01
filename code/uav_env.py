@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from config import (CKPT_EVERY, EARLY_THR, EARLY_WIN, EPISODE_LEN,
+from config import (CKPT_EVERY, EARLY_SHORT, EARLY_THR, EARLY_WIN, EPISODE_LEN,
                     OBS_NORM, PF_RELAX, PF_U_MAP, PI_DUAL_STEP,
                     PI_MAX, PI_MIN, R_MIN, SE_REF, SIGMA, TOTAL_ROLLOUTS,
                     U_STAR, W_BAL, W_EFF, W_LOAD)
