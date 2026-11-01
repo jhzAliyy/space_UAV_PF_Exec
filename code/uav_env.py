@@ -152,15 +152,12 @@ BW_SHARE = "prop_demand"
 EPS_U = 1e-9
 EPS_D = 0.1
 
-# ----------------------------- 奖励（u7 历史 / u8 现行） -----------------------------
-# u9（2026-10-31 重写，取代 u8 作为训练主口径）：
-#   三个互不重叠的子目标，各自归一到 [0,1]，权重和 = 1，单步奖励必然 ∈ [0,1]。
-#     均衡度 bal     = 1/(1+|u_i−mean(u)|/mean(u))           均匀时 = 1
-#     负载度 load_ok = 1−clip(|u_i−u*|/u_span, 0, 1)         u=u* 时 = 1
-#     吞吐度 eff     = clip(T_i/b_bar/se_ref, 0, 1)          b_bar 跨规模恒定
-#   u8 的问题（逐条实测）：吞吐项分子逐机、分母全场总带宽 → 1/N；delay=1/(R−ρ)
-#   奇异且与 load、over_add 三者重复惩罚同一个 u；功率项与场目标 p*=1.0 对打。
-# ----------------------------- 奖励（参数全部在 config.py） -----------------------------
+# ----------------------------- 奖励（现行实现） -----------------------------
+# 三个子目标，权重和 = 1，全部输入来自本机观测：
+#   均衡度 bal  = 1/(1 + Σ_j(û_i−û_j)²/(deg_i+1))
+#   负载度 load = max(R_MIN, 1−((û_i−u*)/SIGMA)²)
+#   吞吐度 eff  = clip(T_i/b_bar/SE_REF, 0, 1)
+#   û=load_view(u)，与观测第 0 维同一映射；常量全部在 config.py。
 
 # ----------------------------- 物理层 -----------------------------
 # 2026-10-28 时钟统一（用户裁定）。三个错位一次性修干净：
@@ -1313,17 +1310,23 @@ class UAVEnvV3:
         self.p = np.clip(self.p, P_MIN, P_MAX)
 
     def _reward(self, d_act: np.ndarray):
-        """逐机奖励 (N,)：简单二次型，目标/尺度/权重全部来自 config.py。
+        """逐机奖励 (N,)：局部二次型，全部输入来自本机观测。
 
-          均衡度 bal     = 1/(1+|u_i−mean(u)|/mean(u))
-          负载度 load    = 1 − ((u_i − U_STAR)/SIGMA)²
-          吞吐度 eff     = clip(T_i/b_bar/SE_REF, 0, 1)
-        奖励允许为负；不做 [0,1] 截断。
+          均衡度 bal  = 1/(1 + Σ_j(û_i−û_j)²/(deg_i+1))
+          负载度 load = max(R_MIN, 1 − ((û_i−U_STAR)/SIGMA)²)
+          吞吐度 eff  = clip(T_i/b_bar/SE_REF, 0, 1)
+
+        û=load_view(u) 与观测第 0 维同一映射；deg_i=0 时 d2=0、bal=1，
+        公式自然成立，无孤立机分支。奖励允许为负；不做 [0,1] 截断。
         """
-        u = self.u
-        mu = max(float(np.mean(u)), 1e-9)
-        bal = 1.0 / (1.0 + np.abs(u - mu) / mu)
-        load = np.maximum(R_MIN, 1.0 - ((u - U_STAR) / SIGMA) ** 2)
+        ue = load_view(self.u)
+        deg = self.adj.sum(axis=1)
+        s1 = self.adj @ ue
+        s2 = self.adj @ (ue ** 2)
+        d2 = deg * ue ** 2 - 2.0 * ue * s1 + s2
+        d2 = np.maximum(d2, 0.0)                 # 数值非负
+        bal = 1.0 / (1.0 + d2 / (deg + 1.0))
+        load = np.maximum(R_MIN, 1.0 - ((ue - U_STAR) / SIGMA) ** 2)
         eff = np.clip(self.T / max(self.b_bar, 1e-9) / SE_REF, 0.0, 1.0)
         return W_BAL * bal + W_LOAD * load + W_EFF * eff
 

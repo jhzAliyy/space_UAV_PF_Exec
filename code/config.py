@@ -6,7 +6,8 @@ import numpy as np
 
 # ---- 奖励（简单二次型） ----
 U_STAR = 0.80          # 锚定目标负载
-SIGMA = 0.20           # 二次型尺度；偏离越大，斜率越大
+U_OVER = 1.0           # 过载阈值：SIGMA 由此推导，使 load 在 u=1.0 触底
+SIGMA = 0.1414213562373095  # (U_OVER-U_STAR)/sqrt(1-R_MIN)，过载即满罚
 R_MIN = -1.0           # 负载项地板：极端死机不再把 critic 目标拉到无穷
 W_BAL = 0.45
 W_LOAD = 0.35

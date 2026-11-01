@@ -112,7 +112,7 @@ class ExecActor(nn.Module):
     速度下限 lo（config.SIG_LO）是 2026-11-01 规模负效应修复的核心：
     网络只允许学"比下限更快"，永远不能把跟队速度关死（悬停由场把
     缺口归零实现，与此正交）。sig_lo 随 ckpt 落盘，评估端按同值重建；
-    旧 ckpt（无该键）在评估端回退为 0 向量 = 旧全域行为，互不污染。
+    缺 sig_lo 的旧 ckpt 不兼容，直接报错，不做回退。
     """
 
     def __init__(self, obs_dim: int = OBS_DIM, out_dim: int = SIG_DIM,
@@ -129,8 +129,8 @@ class ExecActor(nn.Module):
         lo = np.asarray(SIG_LO if sig_lo is None else sig_lo,
                         dtype=np.float32)
         assert lo.shape == (out_dim,), f"sig_lo 形状 {lo.shape} != {out_dim}"
-        # persistent=False：lo 不进 state_dict（新旧 ckpt 的权重键一致，
-        # load_state_dict 不冲突）；评估端由 ckpt 的 sig_lo 键构造同支。
+        # persistent=False：lo 不进 state_dict；评估端必须从 ckpt 的
+        # sig_lo 键重建同一支下限，缺键即报错。
         self.register_buffer("lo", torch.from_numpy(lo), persistent=False)
 
     def logits(self, x):
@@ -141,7 +141,7 @@ class ExecActor(nn.Module):
 
 
 class Critic(nn.Module):
-    """Q(o, σ) → 标量。σ 与 actor 输出同域，四维。"""
+    """Q(o, σ) → 标量。σ 是 actor 输出的四维增益。"""
 
     def __init__(self, obs_dim: int = OBS_DIM, act_dim: int = SIG_DIM,
                  widths: tuple = (16, 32, 64, 32, 16), p: float = 0.1):
@@ -176,27 +176,31 @@ def cur_state(env) -> np.ndarray:
     return x
 
 
+def scale_action(a_field: np.ndarray, sigma: np.ndarray) -> np.ndarray:
+    """纯势场动作 (N,5) × 逐维增益 σ (N,4) → 实际动作 (N,5)。
+
+    σ 的 xy 一位同时乘位置两列。a_field 已在动作界内，σ∈[0,1]，
+    因此结果自然在界内，不需要额外 clip。
+    """
+    s = np.asarray(sigma, dtype=np.float32)
+    a = np.array(a_field, copy=True)
+    a[:, 0] *= s[:, 0]
+    a[:, 1] *= s[:, 1]
+    a[:, 2] *= s[:, 2]
+    a[:, 3:5] *= s[:, 3:4]
+    return a
+
+
 def build_action(env, field: GlobalField, sigma: np.ndarray,
                  with_pos: bool = True):
-    """σ ∈ (0,1)^4 → 五维动作。唯一实现，训练与评估共用。
+    """σ ∈ (0,1)^4 → 实际动作。唯一实现，训练与评估共用。
 
-        a_b  = σ_b  · clip(b* − b, ±DB_MAX) · PF_RELAX
-        a_π  = σ_π  · clip(π* − π, ±DPI_MAX)
-        a_p  = σ_p  · clip(1 − p,  ±DP_MAX)
-        a_xy = σ_xy · (x*_xy − x_xy)        一个标量同时乘 x、y 两列
-
-    σ 由网络 sigmoid 给出，不再做任何截断；方向恒等于场。
+    纯势场动作 a_field = field.act(env) 是唯一基准；网络只乘增益 σ。
+    σ=1 时逐位等于纯势场。返回 (a, σ, a_field)。
     """
-    xf = field.target_state(env)
-    x = cur_state(env)
-    s = np.asarray(sigma, dtype=np.float32)
-    d = np.zeros((env.n_uav, 5), dtype=np.float32)
-    d[:, 0] = s[:, 0] * np.clip(xf[:, 0] - x[:, 0], -DB_MAX, DB_MAX) * PF_RELAX
-    d[:, 1] = s[:, 1] * np.clip(xf[:, 1] - x[:, 1], -DPI_MAX, DPI_MAX)
-    d[:, 2] = s[:, 2] * np.clip(xf[:, 2] - x[:, 2], -DP_MAX, DP_MAX)
-    if with_pos:
-        d[:, 3:5] = s[:, 3:4] * (xf[:, 3:5] - x[:, 3:5])
-    return d, s
+    a_field = field.act(env, with_pos=with_pos)
+    return scale_action(a_field, sigma), np.asarray(
+        sigma, dtype=np.float32), a_field
 
 
 class ExecCtrl:
@@ -210,7 +214,7 @@ class ExecCtrl:
         self.eta_fixed = float(eta_fixed)
         self.with_pos = bool(with_pos)
 
-    def act(self, env, deterministic: bool = False):
+    def act(self, env, deterministic: bool = False, a_field=None):
         if self.eta_fixed >= 0.0:                 # 消融：固定比例
             sigma = np.full((env.n_uav, SIG_DIM), self.eta_fixed,
                             dtype=np.float32)
@@ -234,8 +238,10 @@ class ExecCtrl:
                 sigma = s_t.numpy()
             if was_training:
                 net.train()
-        d, s = build_action(env, self.field, sigma, self.with_pos)
-        return d, s, np.zeros(env.n_uav, dtype=np.float32)
+        if a_field is None:
+            return build_action(env, self.field, sigma, self.with_pos)
+        a = scale_action(a_field, sigma)
+        return a, np.asarray(sigma, dtype=np.float32), a_field
 
 
 def soft_update(net, target, tau: float) -> None:
@@ -295,7 +301,9 @@ def train(args: Args) -> Path:
     # TD3 双 critic（cleanrl td3_continuous_action.py）：min(Q1,Q2) 抑制
     # 过估与错位——实测旧单 critic 给坏策略 q≈68、好策略 q≈9（倒挂），
     # actor 跟随伪梯度把 σ 推向敏感区。
-    critic, c2, c_t, c2_t = (Critic(widths=tuple(args.widths), p=args.dropout_p)
+    critic, c2, c_t, c2_t = (Critic(act_dim=SIG_DIM,
+                                    widths=tuple(args.widths),
+                                    p=args.dropout_p)
                              for _ in range(4))
     a_t.eval()
     c_t.eval()
@@ -314,7 +322,7 @@ def train(args: Args) -> Path:
 
     # 2026-11-01 用户裁定：续跑机制证伪（warm_n 重 warm-up 无先例、
     # 实测修复无效），启动必须跑完。本函数恒 fresh：每次启动从 r1 开始，
-    # 不加载任何 ckpt/replay/日志状态。--fresh 保留为无操作 CLI 兼容。
+    # 不加载任何 ckpt/replay/日志状态。--fresh 是显式标志，恒 fresh。
     start = 0
     ckpt = tdir / "latest.pt"
 
@@ -337,6 +345,7 @@ def train(args: Args) -> Path:
 
     env.reset()
     obs = pf_obs(env)
+    a_field = field.act(env, with_pos=args.with_pos)
     rets: list = []
     cl_v = qm_v = sm_v = 0.0
     n_learn = 0
@@ -378,8 +387,8 @@ def train(args: Args) -> Path:
                "eta_fixed": float(args.eta_fixed),
                "widths": list(args.widths),
                "dropout_p": float(args.dropout_p),
-               # 速度下限随权重落盘：评估端 forward 必须用同一支下限；
-               # 旧 ckpt（无该键）评估端回退 0 向量 = 旧全域行为。
+               # 速度下限随权重落盘：评估端必须用同一支下限；
+               # 缺 sig_lo 的 ckpt 不兼容，不做回退。
                "sig_lo": np.asarray(SIG_LO, dtype=np.float32).tolist()}
         torch.save(obj, ckpt)
         return obj
@@ -397,16 +406,20 @@ def train(args: Args) -> Path:
             if n_step < args.learning_starts:
                 sigma = (lo_np + (1.0 - lo_np)
                          * rng.random((env.n_uav, SIG_DIM))).astype(np.float32)
-                d, _ = build_action(env, field, sigma, args.with_pos)
+                a = scale_action(a_field, sigma)
             else:
-                d, sig, _ = ctrl.act(env, deterministic=False)
+                a, sig, _ = ctrl.act(env, deterministic=False,
+                                     a_field=a_field)
                 sigma = sig.astype(np.float32)
-            next_obs, r, done, _ = env.step(d)
+            next_obs, r, done, _ = env.step(a)
+            next_a_field = field.act(env, with_pos=args.with_pos)
             nobs = pf_obs(env)
             # nan/inf 护栏（2026-11-01）：n100 曾出现整轮 nan 自愈轮
             # （r125/r250）。非有限转移一旦被采样会永久毒死网络——
             # 坚决不入池，只告警。物理来源另查（见分析报告 E6.4）。
             if (np.isfinite(nobs).all() and np.isfinite(r).all()
+                    and np.isfinite(a).all() and np.isfinite(a_field).all()
+                    and np.isfinite(next_a_field).all()
                     and np.isfinite(sigma).all()):
                 rb.add(obs, sigma, r, nobs, float(done))
                 rets.append(r)
@@ -417,6 +430,7 @@ def train(args: Args) -> Path:
                       f"r_finite={np.isfinite(r).all()} 累计 {n_bad}，"
                       f"该步不入池", flush=True)
             obs = nobs
+            a_field = next_a_field
             sm_v = float(np.mean(sigma))
             n_step += 1
             # ALGO LOGIC: TD3 更新（cleanrl td3_continuous_action.py）。
@@ -430,7 +444,7 @@ def train(args: Args) -> Path:
                 critic.train()
                 c2.train()
                 with torch.no_grad():
-                    # 目标策略平滑：a' = clip(a_t(no')+clip(ε,±noise_clip))
+                    # 目标策略平滑：在 σ 域加噪、截到 σ 域上下界。
                     noise = (torch.randn_like(a_in) * args.policy_noise
                              ).clamp(-args.noise_clip, args.noise_clip)
                     a_next = torch.maximum(
@@ -464,6 +478,7 @@ def train(args: Args) -> Path:
                 drain_stats()
                 env.reset()
                 obs = pf_obs(env)
+                a_field = field.act(env, with_pos=args.with_pos)
                 for k in seg_keys:
                     seg[k].clear()
                     seg_len[k] = 0

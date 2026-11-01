@@ -9,11 +9,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {scene: flow,  n: 30, mode: ddpga}
-          - {scene: burst, n: 30, mode: ddpga}
-          - {scene: flow,  n: 30, mode: dqnm}
-          - {scene: burst, n: 30, mode: dqnm}
-          - {scene: burst, n: 60, mode: dqnm}
+          - { tag: flow_n12_pfrl,   scene: flow,   n: 12, mode: pfrl,  dxy: 0.5, preset: "" }
+          - { tag: burst_n12_pfrl,  scene: burst,  n: 12, mode: pfrl,  dxy: 0.5, preset: "" }
+          - { tag: flow_n30_pfrl,   scene: flow,   n: 30, mode: pfrl,  dxy: 0.5, preset: "" }
+          - { tag: burst_n30_pfrl,  scene: burst,  n: 30, mode: pfrl,  dxy: 0.5, preset: "" }
+          - { tag: flow_n12_ddpga,  scene: flow,   n: 12, mode: ddpga, dxy: 0.5, preset: "" }
+          - { tag: burst_n12_ddpga, scene: burst,  n: 12, mode: ddpga, dxy: 0.5, preset: "" }
+          - { tag: flow_n30_ddpga,  scene: flow,   n: 30, mode: ddpga, dxy: 0.5, preset: "" }
+          - { tag: burst_n30_ddpga, scene: burst,  n: 30, mode: ddpga, dxy: 0.5, preset: "" }
+          - { tag: flow_n30_dqnm,   scene: flow,   n: 30, mode: dqnm,  dxy: 0.5, preset: "" }
+          - { tag: burst_n30_dqnm,  scene: burst,  n: 30, mode: dqnm,  dxy: 0.5, preset: "" }
+          - { tag: native_pfrl_cheng7,  scene: static, n: 7, mode: pfrl, dxy: 2.0, preset: cheng7 }
+          - { tag: native_pfrl_rizvi3,  scene: static, n: 3, mode: pfrl, dxy: 0.5, preset: rizvi3 }
+          - { tag: native_pfrl_shen3,   scene: static, n: 3, mode: pfrl, dxy: 5.0, preset: shen3 }
+          - { tag: native_pfrl_jiang5,  scene: static, n: 5, mode: pfrl, dxy: 0.5, preset: jiang5 }
     timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
@@ -55,22 +64,53 @@ jobs:
           export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
           python -c "import uav_env, pfrl, ddpga, dqnm; print('IMPORT_OK')"
 
+      - name: Speed gate (30 rollouts, must fit 6h budget)
+        shell: bash
+        run: |
+          set -e
+          cd code
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          PA=""
+          if [ -n "${{ matrix.preset }}" ]; then PA="--preset ${{ matrix.preset }}"; fi
+          S=$(date +%s)
+          OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
+          PF_CHANNEL=umi PF_SHADOW_DB=random PF_DXY_MAX=${{ matrix.dxy }} \
+            python ${{ matrix.mode }}.py --mode ${{ matrix.mode }} --tau 5 \
+            --seed 0 --scene ${{ matrix.scene }} --n-uav ${{ matrix.n }} \
+            --total-rollouts 30 --fresh $PA \
+            --task speed_${{ matrix.tag }} 2>&1 | tail -3
+          E=$(date +%s)
+          T=$((E-S))
+          python - "$T" <<'EOF'
+import sys
+t = int(sys.argv[1])
+per = t / 30.0
+est = per * 1200
+budget = 355 * 60 - 420
+fit = "YES" if est < budget else "NO"
+print(f"[SPEED] total_30={t}s per_rollout={per:.1f}s est_1200={est:.0f}s ({est/3600:.2f}h) budget={budget}s fit={fit}")
+sys.exit(0 if fit == "YES" else 3)
+EOF
+
       - name: Train
         shell: bash
         run: |
           cd code
           export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          PA=""
+          if [ -n "${{ matrix.preset }}" ]; then PA="--preset ${{ matrix.preset }} --task ${{ matrix.tag }}"; fi
+          rm -rf ckpt/speed_${{ matrix.tag }}
           OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
-          PF_CHANNEL=umi PF_SHADOW_DB=random PF_DXY_MAX=0.5 \
+          PF_CHANNEL=umi PF_SHADOW_DB=random PF_DXY_MAX=${{ matrix.dxy }} \
             python ${{ matrix.mode }}.py --mode ${{ matrix.mode }} --tau 5 \
             --seed 0 --scene ${{ matrix.scene }} --n-uav ${{ matrix.n }} \
-            --total-rollouts 1200 --fresh 2>&1 | tee train_${{ matrix.scene }}_n${{ matrix.n }}_${{ matrix.mode }}.log
+            --total-rollouts 1200 --fresh $PA 2>&1 | tee train_${{ matrix.tag }}.log
 
       - name: Upload ckpt
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ckpt_${{ matrix.scene }}_n${{ matrix.n }}_${{ matrix.mode }}
+          name: ckpt_${{ matrix.tag }}
           path: |
             code/ckpt/
             code/train_*.log
