@@ -14,8 +14,6 @@ jobs:
           - {scene: burst, n: 30, mode: ddpga}
           - {scene: flow,  n: 30, mode: dqnm}
           - {scene: burst, n: 30, mode: dqnm}
-          - {scene: burst, n: 60, mode: ddpga}
-          - {scene: flow,  n: 60, mode: dqnm}
           - {scene: burst, n: 60, mode: dqnm}
     timeout-minutes: 355
     steps:
