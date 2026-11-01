@@ -81,16 +81,7 @@ jobs:
             --task speed_${{ matrix.tag }} 2>&1 | tail -3
           E=$(date +%s)
           T=$((E-S))
-          python - "$T" <<'EOF'
-import sys
-t = int(sys.argv[1])
-per = t / 30.0
-est = per * 1200
-budget = 355 * 60 - 420
-fit = "YES" if est < budget else "NO"
-print(f"[SPEED] total_30={t}s per_rollout={per:.1f}s est_1200={est:.0f}s ({est/3600:.2f}h) budget={budget}s fit={fit}")
-sys.exit(0 if fit == "YES" else 3)
-EOF
+          python -c "import sys; t=$T; per=t/30.0; est=per*1200; budget=355*60-420; fit='YES' if est<budget else 'NO'; print(f'[SPEED] total_30={t}s per_rollout={per:.1f}s est_1200={est:.0f}s ({est/3600:.2f}h) budget={budget}s fit={fit}'); sys.exit(0 if fit=='YES' else 3)"
 
       - name: Train
         shell: bash
