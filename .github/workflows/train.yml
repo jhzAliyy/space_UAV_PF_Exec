@@ -9,7 +9,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {scene: flow,  n: 30, mode: pfrl}
           - {scene: flow,  n: 30, mode: ddpga}
           - {scene: burst, n: 30, mode: ddpga}
           - {scene: flow,  n: 30, mode: dqnm}
