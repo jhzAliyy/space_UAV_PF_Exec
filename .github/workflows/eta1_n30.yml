@@ -27,7 +27,6 @@ jobs:
           pip install numpy gymnasium
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install mujoco
-          pip install ./deps/MuJoCo-drones-gym
 
       - name: Build C cores
         shell: bash
@@ -41,6 +40,7 @@ jobs:
         shell: bash
         run: |
           cd code
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
           PF_CHANNEL=umi OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
             python pfrl.py --mode pfrl --scene ${{ matrix.scene }} \
               --n-uav 30 --total-rollouts 1200 \
