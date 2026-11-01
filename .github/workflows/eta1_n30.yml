@@ -3,7 +3,7 @@ name: eta1-n30-ablation
 on:
   workflow_dispatch:
   push:
-    paths: ['code/**']
+    paths: ['code/**', 'deps/**']
 
 jobs:
   ablate:
@@ -21,12 +21,16 @@ jobs:
           python-version: '3.11'
 
       - name: Install Python deps
+        shell: bash
         run: |
           python -m pip install -U pip
-          pip install numpy
+          pip install numpy gymnasium
           pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install mujoco
+          pip install ./deps/MuJoCo-drones-gym
 
       - name: Build C cores
+        shell: bash
         run: |
           cd code
           gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
@@ -34,6 +38,7 @@ jobs:
           ls -la *.so
 
       - name: Run eta1 ablation n30 (${{ matrix.scene }})
+        shell: bash
         run: |
           cd code
           PF_CHANNEL=umi OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
