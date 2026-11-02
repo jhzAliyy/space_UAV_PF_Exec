@@ -537,6 +537,7 @@ class BaseAviary(gym.Env):
         clipped_action = np.reshape(self._preprocessAction(action), (self.NUM_DRONES, 4))
 
         # Simulation sub-steps
+        batch_ok = (self.PHYSICS == Physics.MJC and self._wind_field is None)
         for _ in range(self.SIM_STEPS_PER_CTRL):
             # Update kinematics between sub-steps for physics effects
             if self.SIM_STEPS_PER_CTRL > 1 and self.PHYSICS in (
@@ -545,34 +546,38 @@ class BaseAviary(gym.Env):
             ):
                 self._updateAndStoreKinematicInformation()
 
-            # Apply physics for each drone
-            for i in range(self.NUM_DRONES):
-                if self.PHYSICS == Physics.MJC:
-                    self._physics(clipped_action[i, :], i)
-                elif self.PHYSICS == Physics.DYN:
-                    self._dynamics(clipped_action[i, :], i)
-                elif self.PHYSICS == Physics.MJC_GND:
-                    self._physics(clipped_action[i, :], i)
-                    self._groundEffect(clipped_action[i, :], i)
-                elif self.PHYSICS == Physics.MJC_DRAG:
-                    self._physics(clipped_action[i, :], i)
-                    self._drag(self.last_clipped_action[i, :], i)
-                elif self.PHYSICS == Physics.MJC_DW:
-                    self._physics(clipped_action[i, :], i)
-                    self._downwash(i)
-                elif self.PHYSICS == Physics.MJC_GND_DRAG_DW:
-                    self._physics(clipped_action[i, :], i)
-                    self._groundEffect(clipped_action[i, :], i)
-                    self._drag(self.last_clipped_action[i, :], i)
-                    self._downwash(i)
+            # Apply physics: 批量路径（每机公式与逐机版逐位相同）
+            if batch_ok:
+                self._physics_all(clipped_action)
+            else:
+                # Apply physics for each drone
+                for i in range(self.NUM_DRONES):
+                    if self.PHYSICS == Physics.MJC:
+                        self._physics(clipped_action[i, :], i)
+                    elif self.PHYSICS == Physics.DYN:
+                        self._dynamics(clipped_action[i, :], i)
+                    elif self.PHYSICS == Physics.MJC_GND:
+                        self._physics(clipped_action[i, :], i)
+                        self._groundEffect(clipped_action[i, :], i)
+                    elif self.PHYSICS == Physics.MJC_DRAG:
+                        self._physics(clipped_action[i, :], i)
+                        self._drag(self.last_clipped_action[i, :], i)
+                    elif self.PHYSICS == Physics.MJC_DW:
+                        self._physics(clipped_action[i, :], i)
+                        self._downwash(i)
+                    elif self.PHYSICS == Physics.MJC_GND_DRAG_DW:
+                        self._physics(clipped_action[i, :], i)
+                        self._groundEffect(clipped_action[i, :], i)
+                        self._drag(self.last_clipped_action[i, :], i)
+                        self._downwash(i)
 
-                # Apply wind disturbance if configured
-                if self._wind_field is not None:
-                    body_id = mujoco.mj_name2id(
-                        self.model, mujoco.mjtObj.mjOBJ_BODY, f"drone{i}")
-                    wind_force = self._wind_field.get_force(
-                        dt=self.SIM_TIMESTEP, position=self.pos[i], velocity=self.vel[i])
-                    self.data.xfrc_applied[body_id, :3] += wind_force
+                    # Apply wind disturbance if configured
+                    if self._wind_field is not None:
+                        body_id = mujoco.mj_name2id(
+                            self.model, mujoco.mjtObj.mjOBJ_BODY, f"drone{i}")
+                        wind_force = self._wind_field.get_force(
+                            dt=self.SIM_TIMESTEP, position=self.pos[i], velocity=self.vel[i])
+                        self.data.xfrc_applied[body_id, :3] += wind_force
 
             # Step MuJoCo (unless using explicit dynamics)
             if self.PHYSICS != Physics.DYN:
@@ -600,6 +605,50 @@ class BaseAviary(gym.Env):
     ############################################################################
     # PHYSICS IMPLEMENTATIONS
     ############################################################################
+
+    def _ensure_batch_ids(self):
+        """批量地址缓存：body/qpos/dof 地址一次性算好（N 机只算一次）。"""
+        if getattr(self, "_drone_body_ids", None) is not None:
+            return
+        n = self.NUM_DRONES
+        self._drone_body_ids = np.array([
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f"drone{i}")
+            for i in range(n)])
+        jids = np.array([
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, f"drone{i}_joint")
+            for i in range(n)])
+        self._drone_qpos_adr = self.model.jnt_qposadr[jids]
+        self._drone_dof_adr = self.model.jnt_dofadr[jids]
+
+    def _physics_all(self, clipped_action):
+        """批量版 _physics：全部机一次算完 xfrc_applied。
+
+        每机公式与 _physics 逐位相同（标量公式按行展开，无跨机归约），
+        只消掉 python 逐机循环。仅覆盖 PHYSICS == MJC 且无风场。
+        """
+        self._ensure_batch_ids()
+        rpm2 = clipped_action ** 2                       # (N,4)
+        forces = rpm2 * self.KF
+        torques = rpm2 * self.KM
+        if self.DRONE_MODEL == DroneModel.RACE:
+            torques = -torques
+        z_torque = -torques[:, 0] + torques[:, 1] - torques[:, 2] + torques[:, 3]
+        total_thrust = np.sum(forces, axis=1)
+        if self.DRONE_MODEL == DroneModel.CF2X or self.DRONE_MODEL == DroneModel.RACE:
+            x_torque = (forces[:, 0] + forces[:, 1] - forces[:, 2] - forces[:, 3]) * (self.L / np.sqrt(2))
+            y_torque = (-forces[:, 0] + forces[:, 1] + forces[:, 2] - forces[:, 3]) * (self.L / np.sqrt(2))
+        else:  # CF2P
+            x_torque = (forces[:, 1] - forces[:, 3]) * self.L
+            y_torque = (-forces[:, 0] + forces[:, 2]) * self.L
+
+        rot = self.data.xmat[self._drone_body_ids].reshape(-1, 3, 3)   # (N,3,3)
+        thrust_world = rot @ np.stack([
+            np.zeros_like(total_thrust), np.zeros_like(total_thrust), total_thrust], axis=1)[:, :, None]
+        torque_body = np.stack([x_torque, y_torque, z_torque], axis=1)[:, :, None]
+        torque_world = rot @ torque_body
+        bid = self._drone_body_ids
+        self.data.xfrc_applied[bid, :3] = thrust_world[:, :, 0]
+        self.data.xfrc_applied[bid, 3:] = torque_world[:, :, 0]
 
     def _physics(self, rpm, nth_drone):
         """Apply forces/torques from RPMs using MuJoCo's external force API.
@@ -771,18 +820,25 @@ class BaseAviary(gym.Env):
     ############################################################################
 
     def _updateAndStoreKinematicInformation(self):
-        """Read and cache drone states from MuJoCo data."""
-        for i in range(self.NUM_DRONES):
-            joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, f"drone{i}_joint")
-            qpos_addr = self.model.jnt_qposadr[joint_id]
-            qvel_addr = self.model.jnt_dofadr[joint_id]
+        """Read and cache drone states from MuJoCo data（批量版）.
 
-            self.pos[i] = self.data.qpos[qpos_addr:qpos_addr + 3]
-            self.quat[i] = self.data.qpos[qpos_addr + 3:qpos_addr + 7]
-            self.vel[i] = self.data.qvel[qvel_addr:qvel_addr + 3]
-            self.ang_v[i] = self.data.qvel[qvel_addr + 3:qvel_addr + 6]
-            # Quaternion to RPY
-            self.rpy[i] = self._quatToRPY(self.quat[i])
+        向量化读回全部机：qpos/qvel 批量切片、四元数→RPY 逐元素同公式，
+        与逐机版数值相同，只消掉 python 逐机循环。
+        """
+        self._ensure_batch_ids()
+        adr = self._drone_qpos_adr[:, None] + np.arange(7)[None, :]
+        q = self.data.qpos[adr]                          # (N,7)
+        self.pos[:] = q[:, 0:3]
+        self.quat[:] = q[:, 3:7]
+        dadr = self._drone_dof_adr[:, None] + np.arange(6)[None, :]
+        v = self.data.qvel[dadr]                         # (N,6)
+        self.vel[:] = v[:, 0:3]
+        self.ang_v[:] = v[:, 3:6]
+        # Quaternion to RPY（与 _quatToRPY 同公式，逐元素）
+        w, x, y, z = self.quat[:, 0], self.quat[:, 1], self.quat[:, 2], self.quat[:, 3]
+        self.rpy[:, 0] = np.arctan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+        self.rpy[:, 1] = np.arcsin(np.clip(2 * (w * y - z * x), -1, 1))
+        self.rpy[:, 2] = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
 
         # Clear xfrc_applied for next step
         self.data.xfrc_applied[:] = 0
