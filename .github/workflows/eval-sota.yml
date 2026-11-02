@@ -1,0 +1,49 @@
+name: eval-sota
+on: workflow_dispatch
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      max-parallel: 20
+      fail-fast: false
+      matrix:
+        include:
+          - { tag: sota,    dxy: "0.5", args: "../artifacts/lists/eval_sota.txt" }
+          
+          
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+      PF_TORCH_THREADS: "1"
+      PF_SHADOW_DB: random
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: deps
+        run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      - name: real code overlay
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
+          tar xzf code_real.tar.gz
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/sota_ckpts.tar.gz
+          tar xzf sota_ckpts.tar.gz
+          ls
+      - name: build native libs
+        run: |
+          cd code
+          g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include crowd_sfm.cpp -o crowd_sfm.so
+          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+      - name: eval
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code
+          PF_CHANNEL=umi PF_DXY_MAX=${{ matrix.dxy }} python -W ignore evaluate.py ../artifacts/lists/eval_sota.txt ../out_${{ matrix.tag }}.csv
+      - name: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-sota-${{ matrix.tag }}
+          path: out_*.csv
+          retention-days: 3
