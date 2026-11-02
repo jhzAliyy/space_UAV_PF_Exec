@@ -12,9 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { tag: burst_n12, art: ckpt_burst_n12_pfrl, rid: "41443377755", dxy: 0.5, line: "pfrl 5 0 burst 1 0 main 12 burst_pfrl_tau5_s0_umi_srand" }
-          - { tag: burst_n30, art: ckpt_burst_n30_pfrl, rid: "41444826741", dxy: 0.5, line: "pfrl 5 0 burst 1 0 main 30 burst_n30_pfrl_tau5_s0_umi_srand" }
-          - { tag: rizvi3, art: ckpt_native_pfrl_rizvi3, rid: "41449743844", dxy: 0.5, line: "pfrl 5 0 static 1 0 main 3 native_pfrl_rizvi3 rizvi3" }
+          - { tag: flow_n30, art: ckpt_flow_n30_pfrl, rid: "41444826741", dxy: 0.5, line: "pfrl 5 0 flow 1 0 main 30 flow_n30_pfrl_tau5_s0_umi_srand" }
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
