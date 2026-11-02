@@ -1,0 +1,77 @@
+name: train-real
+on: workflow_dispatch
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      max-parallel: 20
+      fail-fast: false
+      matrix:
+        include:
+          - { mode: dqnm,    scene: flow,  n: 12, real: 0 }
+          - { mode: dqnm,    scene: burst, n: 12, real: 0 }
+          - { mode: learned, scene: flow,  n: 12, real: 0 }
+          - { mode: learned, scene: burst, n: 12, real: 0 }
+          - { mode: learned, scene: flow,  n: 30, real: 0 }
+          - { mode: learned, scene: burst, n: 30, real: 0 }
+          - { mode: learned, scene: flow,  n: 60, real: 0 }
+          - { mode: learned, scene: burst, n: 60, real: 0 }
+          - { mode: learned, scene: flow,  n: 12, real: 1 }
+          - { mode: learned, scene: burst, n: 12, real: 1 }
+          - { mode: learned, scene: flow,  n: 30, real: 1 }
+          - { mode: learned, scene: burst, n: 30, real: 1 }
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+      PF_TORCH_THREADS: "1"
+      PF_SHADOW_DB: random
+      PF_DXY_MAX: "0.5"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: deps
+        run: |
+          pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+          cd deps/lightsfm && make -s 2>/dev/null || true
+      - name: real code overlay (learned cells)
+        if: matrix.mode == 'learned'
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
+          tar xzf code_real.tar.gz
+      - name: import check
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code && python -c "import uav_env; print('IMPORT_OK')"
+      - name: speed gate (30 rollouts must fit 6h)
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code
+          S=$(date +%s)
+          PF_CHANNEL=${{ matrix.n == 200 && 'uma' || 'umi' }} PF_REAL_OBS=${{ matrix.real }} \
+            python -W ignore ${{ matrix.mode == 'learned' && 'run.py --algo learned --total-rollouts 30' || 'dqnm.py --mode dqnm --chan main --total-rollouts 30 --fresh' }} \
+            --scene ${{ matrix.scene }} --n-uav ${{ matrix.n }} 2>&1 | tail -1 \
+            || python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} --total-rollouts 30 2>&1 | tail -1
+          E=$(date +%s); PER=$(( (E-S) ))
+          echo "30轮 ${PER}s；外推1200轮 $(( PER * 40 / 60 ))min"
+          if [ $(( PER * 40 )) -gt 20000 ]; then echo "超6h预算，退出"; exit 1; fi
+      - name: train 1200
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code
+          if [ "${{ matrix.mode }}" = "learned" ]; then
+            PF_CHANNEL=${{ matrix.n == 200 && 'uma' || 'umi' }} PF_REAL_OBS=${{ matrix.real }} \
+              python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} --total-rollouts 1200
+          else
+            PF_CHANNEL=umi python -W ignore dqnm.py --mode dqnm --tau 5 --seed 0 \
+              --scene ${{ matrix.scene }} --n-uav ${{ matrix.n }} --chan main \
+              --total-rollouts 1200 --fresh --task ${{ matrix.scene }}_n${{ matrix.n }}_dqnm_tau5_s0_umi_srand
+          fi
+      - name: upload ckpt
+        uses: actions/upload-artifact@v4
+        with:
+          name: ckpt-${{ matrix.mode }}-${{ matrix.scene }}-n${{ matrix.n }}-r${{ matrix.real }}
+          path: code/ckpt/
+          retention-days: 3
