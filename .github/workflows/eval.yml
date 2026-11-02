@@ -1,0 +1,78 @@
+name: eval-pool
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tag: n12_flow, art: ckpt_flow_n12_pfrl, rid: "41443377755", dxy: 0.5, line: "pfrl 5 0 flow 1 0 main 12 flow_pfrl_tau5_s0_umi_srand" }
+          - { tag: shen3, art: ckpt_native_pfrl_shen3, rid: "41444826741", dxy: 5.0, line: "pfrl 5 0 static 1 0 main 3 native_pfrl_shen3 shen3" }
+          - { tag: jiang5, art: ckpt_native_pfrl_jiang5, rid: "41444826741", dxy: 0.5, line: "pfrl 5 0 static 1 0 main 5 native_pfrl_jiang5 jiang5" }
+          - { tag: cheng7, art: ckpt_native_pfrl_cheng7, rid: "41444826741", dxy: 2.0, line: "pfrl 5 0 static 1 0 main 7 native_pfrl_cheng7 cheng7" }
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        shell: bash
+        run: |
+          python -m pip install -U pip
+          pip install numpy gymnasium
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install mujoco
+
+      - name: Build C cores
+        shell: bash
+        run: |
+          cd code
+          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+          g++ -O3 -fopenmp -shared -fPIC crowd_sfm.cpp -o crowd_sfm.so -I shim -I ../deps/lightsfm/include
+
+      - name: Download ckpt artifact (same repo, source run)
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.art }}
+          run-id: ${{ matrix.rid }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dl
+
+      - name: Place ckpt into code/ckpt
+        shell: bash
+        run: |
+          find dl -maxdepth 3 | head -20
+          mkdir -p code/ckpt
+          if [ -d dl/ckpt ]; then cp -r dl/ckpt/* code/ckpt/;
+          elif [ -d dl/code/ckpt ]; then cp -r dl/code/ckpt/* code/ckpt/;
+          else echo "NO_CKPT_DIR"; exit 1; fi
+          ls code/ckpt/
+
+      - name: Evaluate (deterministic, tiers 2000/3000/4000)
+        shell: bash
+        run: |
+          cd code
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          echo "${{ matrix.line }}" > /tmp/ev.txt
+          cat /tmp/ev.txt
+          OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
+          PF_CHANNEL=umi PF_SHADOW_DB=random PF_DXY_MAX=${{ matrix.dxy }} \
+            python evaluate.py /tmp/ev.txt "$GITHUB_WORKSPACE/eval_${{ matrix.tag }}.csv"
+          echo ===RESULT===
+          cat "$GITHUB_WORKSPACE/eval_${{ matrix.tag }}.csv"
+
+      - name: Upload eval csv
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval_${{ matrix.tag }}
+          path: eval_${{ matrix.tag }}.csv
