@@ -1,0 +1,46 @@
+name: ckpt-transfer
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download n12 artifact
+        uses: actions/download-artifact@v4
+        with:
+          run-id: "41443377755"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dl
+          name: ckpt_flow_n12_pfrl
+
+      - name: Download native artifacts (3 cells)
+        uses: actions/download-artifact@v4
+        with:
+          run-id: "41444826741"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dl
+          pattern: ckpt_native_pfrl_*
+          merge-multiple: true
+
+      - name: Strip snaps, keep triads
+        run: |
+          find dl -type d -name snaps -exec rm -rf {} + || true
+          find dl -type f | sort
+
+      - name: Push to ckpt-v2 branch
+        run: |
+          cd dl
+          git init -q
+          git config user.name "ckpt-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git checkout -q -b ckpt-v2
+          git add -A
+          git commit -qm "v2 ckpt triads: flow_n12 + shen3/jiang5/cheng7"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ckpt-v2
+          echo PUSHED
