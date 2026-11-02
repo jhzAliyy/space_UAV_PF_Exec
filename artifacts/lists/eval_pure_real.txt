@@ -1,0 +1,10 @@
+field 5 0 flow 1 0.0 umi 12
+field 5 0 flow 1 0.0 umi 30
+field 5 0 flow 1 0.0 umi 60
+field 5 0 flow 1 0.0 umi 100
+field 5 0 flow 1 0.0 uma 200
+field 5 0 burst 1 0.0 umi 12
+field 5 0 burst 1 0.0 umi 30
+field 5 0 burst 1 0.0 umi 60
+field 5 0 burst 1 0.0 umi 100
+field 5 0 burst 1 0.0 uma 200
