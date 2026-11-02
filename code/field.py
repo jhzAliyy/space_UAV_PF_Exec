@@ -212,7 +212,12 @@ class GlobalField:
         # 带宽维与 pfrl.build_action 同口径：先按物理单步上限裁，
         # 再乘松弛系数。反序（先乘 0.2 再裁 ±5）会把 b 维单步上限
         # 从 1.0 放大到 5.0，纯势场臂就拿到了主方法表达不出的幅度。
-        d[:, 0] = np.clip(d[:, 0], -DB_MAX, DB_MAX) * self.relax
+        # 2026-11-02 rizvi3 尺度修复：上限改 env.b_scale（按 b_total
+        # 归一，其余场景 = DB_MAX 逐位不变）；锚定 b*=c/u* 无总量上限，
+        # 严重过载场景 b* 可冲到 MHz 量级，全局 ±5 裁剪在 kHz 级
+        # 场景里单步 22 倍总带宽 → _project 归一 → bang-bang（docs/03 §11）。
+        bs = getattr(env, "b_scale", DB_MAX)
+        d[:, 0] = np.clip(d[:, 0], -bs, bs) * self.relax
         a = np.clip(d, ACT_LOW[None, :], ACT_HIGH[None, :])
         if not with_pos:
             a[:, 3:5] = 0.0

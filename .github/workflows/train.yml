@@ -16,6 +16,7 @@ jobs:
           - { tag: native_pfrl_cheng7, scene: static, n: 7, mode: pfrl, dxy: 2.0, preset: cheng7 }
           - { tag: native_pfrl_shen3,  scene: static, n: 3, mode: pfrl, dxy: 5.0, preset: shen3 }
           - { tag: native_pfrl_jiang5, scene: static, n: 5, mode: pfrl, dxy: 0.5, preset: jiang5 }
+          - { tag: native_pfrl_rizvi3, scene: static, n: 3, mode: pfrl, dxy: 0.5, preset: rizvi3 }
     timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4

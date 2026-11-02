@@ -114,7 +114,8 @@ class ResidualActor(nn.Module):
 
     def __init__(self, obs_dim: int = OBS_DIM_PF, act_dim: int = ACT_DIM,
                  widths: tuple = (16, 32, 64, 32, 16), p: float = 0.0,
-                 res_frac: float = RES_FRAC):
+                 res_frac: float = RES_FRAC,
+                 act_scale: np.ndarray | None = None):
         super().__init__()
         dims = (obs_dim,) + tuple(widths)
         self.blocks = nn.Sequential(*[
@@ -123,7 +124,10 @@ class ResidualActor(nn.Module):
         self.out = nn.Linear(dims[-1], act_dim)
         nn.init.uniform_(self.out.weight, -3e-3, 3e-3)
         nn.init.constant_(self.out.bias, 0.0)     # logit 0 → Δ = 0
-        res_max = (float(res_frac) * ACT_SCALE).astype(np.float32)
+        # act_scale 默认全局 ACT_SCALE；rizvi3 等 kHz 级场景传 env 尺度
+        # （b 维 = env.b_scale，2026-11-02 尺度修复），其余场景两者逐位相等。
+        res_max = (float(res_frac) * (act_scale if act_scale is not None
+                                      else ACT_SCALE)).astype(np.float32)
         # persistent=False：res_max 不进 state_dict；评估端由 ckpt 的
         # res_frac 键构造同支。
         self.register_buffer("res_max_t", torch.from_numpy(res_max),
@@ -155,14 +159,28 @@ class Critic(nn.Module):
 # ---------------------------------------------------------------- 契约
 
 
+def act_scale_of(env) -> np.ndarray:
+    """本环境的动作尺度向量：全局 ACT_SCALE，b 维换 env.b_scale。
+
+    rizvi3 尺度修复（2026-11-02，docs/03 §11.5）：kHz 级总带宽场景里
+    全局 5 MHz 的 b 维尺度让残差上界（0.4×5=2 MHz = 44 倍总带宽）与
+    critic 归一化（a_b/5 ≈ 1e-4，信号被压死）双双失效。其余场景
+    env.b_scale == ACT_SCALE[0]，本函数与全局常量逐位一致。
+    """
+    s = ACT_SCALE.copy()
+    s[0] = env.b_scale
+    return s
+
+
 def pf_obs(env, a_field: np.ndarray) -> np.ndarray:
     """观测定标：12 维逐维除以 OBS_NORM + 3 个缺口维
     [|a_field_b|/s_b, |a_field_π|/s_π, |a_field_xy|/s_xy]。
     缺口复用当场场动作（已解），零额外求解；修正项必须看得见缺口。"""
     o = env.obs() / OBS_NORM[None, :]
-    g = np.stack([np.abs(a_field[:, 0]) / ACT_SCALE[0],
-                  np.abs(a_field[:, 1]) / ACT_SCALE[1],
-                  np.hypot(a_field[:, 3], a_field[:, 4]) / ACT_SCALE[3]],
+    s = act_scale_of(env)
+    g = np.stack([np.abs(a_field[:, 0]) / s[0],
+                  np.abs(a_field[:, 1]) / s[1],
+                  np.hypot(a_field[:, 3], a_field[:, 4]) / s[3]],
                  axis=1)
     return np.concatenate([o, g], axis=1).astype(np.float32)
 
@@ -268,8 +286,10 @@ def train(args: Args) -> Path:
     env = make_env(args)
     u_star = None if args.anchor > 0 else args.u_star
 
+    act_scale = act_scale_of(env)          # b 维按 env.b_scale（rizvi3 修复）
     actor, a_t = (ResidualActor(widths=tuple(args.widths),
-                                p=args.dropout_p) for _ in range(2))
+                                p=args.dropout_p, act_scale=act_scale)
+                  for _ in range(2))
     # TD3 双 critic（cleanrl td3_continuous_action.py）：min(Q1,Q2) 抑制
     # 过估与错位。
     critic, c2, c_t, c2_t = (Critic(widths=tuple(args.widths),
@@ -357,14 +377,17 @@ def train(args: Args) -> Path:
                # 残差界随权重落盘：评估端 forward 必须用同一支上界；
                # 缺键即旧版 ckpt，直接报错不回退。
                "res_frac": float(RES_FRAC),
+               # b 维尺度随权重落盘（rizvi3 尺度修复）：评估端用它重建
+               # 残差上界，并与评估环境 b_scale 断言一致，防止场景错配。
+               "b_scale": float(act_scale[0]),
                "obs_dim_pf": OBS_DIM_PF}
         torch.save(obj, ckpt)
         return obj
 
     total = args.total_rollouts
     n_step = start * args.rollout_len
-    res_max_np = (float(RES_FRAC) * ACT_SCALE).astype(np.float32)
-    act_scale_t = torch.as_tensor(ACT_SCALE, dtype=torch.float32)
+    res_max_np = (float(RES_FRAC) * act_scale).astype(np.float32)
+    act_scale_t = torch.as_tensor(act_scale, dtype=torch.float32)
     act_low_t = torch.as_tensor(ACT_LOW, dtype=torch.float32)
     act_high_t = torch.as_tensor(ACT_HIGH, dtype=torch.float32)
     n_bad = 0                                   # nan/inf 护栏计数
@@ -389,7 +412,7 @@ def train(args: Args) -> Path:
                     and np.isfinite(a).all() and np.isfinite(a_field).all()
                     and np.isfinite(next_a_field).all()
                     and np.isfinite(delta).all()):
-                a_norm = a / ACT_SCALE[None, :]
+                a_norm = a / act_scale[None, :]
                 rb.add(obs, a_norm, r, nobs, float(done),
                        a_field, next_a_field)
                 rets.append(r)

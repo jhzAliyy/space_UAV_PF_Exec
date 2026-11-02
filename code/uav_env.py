@@ -11,7 +11,8 @@ from pathlib import Path
 import numpy as np
 
 from config import (CKPT_EVERY, EARLY_SHORT, EARLY_THR, EARLY_WIN,
-                    EPISODE_LEN, LOAD_FLOOR, LOAD_SLOPE, OBS_NORM, PF_RELAX,
+                    EPISODE_LEN, IDLE_R_EPS, IDLE_U_CAP, LOAD_FLOOR,
+                    LOAD_SLOPE, OBS_NORM, PF_RELAX,
                     PF_U_MAP, PI_DUAL_STEP, PI_MAX, PI_MIN, R_MIN, SE_REF,
                     SIGMA, TOTAL_ROLLOUTS, U_OVER, U_STAR, W_BAL, W_EFF,
                     W_LOAD)
@@ -1020,6 +1021,20 @@ class UAVEnvV3:
         self.R_avail = (self.assoc * self._R).sum(axis=1)
         self.rho = self.assoc @ self.dem
         self.u = self.rho / np.maximum(self.R_avail, EPS_U)
+        # 空载 u 语义修正（2026-11-02，仅 kHz 级尺度修复场景）：塌缩尾部上
+        # ρ/R_avail 是与尾部大小无关的 0/0 垃圾值（假过载毒化 π 对偶与
+        # 指标）。幻影判据用**绝对容量**：R_avail < 1e-6 Mbps（真服务任何
+        # 近旁用户的机 ≥ 0.0005 MHz × ~0.1 bps/Hz × 关联份额 ≈ 5e-5 量级，
+        # 永不触界），rho 阈值在关联过渡期会漏（rho 微升而 R_avail 仍≈0）。
+        # 门控 self.b_scale < DB_MAX（窄带场景，现仅 rizvi3）：宽带场景的
+        # "近似空载"机 u 是均衡正常组成（cheng7 实测 206/400 步 rho<0.1%
+        # 总量且工作正常），改动会污染其训练/评估口径，一律保持旧语义。
+        if self.b_scale < DB_MAX - 1e-12:
+            self.u[self.R_avail < IDLE_R_EPS] = 0.0
+            # 深过载封顶（同门控）：尾部关联以 ~0 速率挂远机时 u=ρ/R 可读
+            # 出 10^2 量级尖峰（关联振荡过渡态），奖励早触地板、信息为零，
+            # 只会爆 obs 与 var_u 指标。读作 IDLE_U_CAP=3（û 拐点）。
+            np.minimum(self.u, IDLE_U_CAP, out=self.u)
         self.T = (self.assoc * np.minimum(self.dem[None, :], self._R)).sum(axis=1)
 
     # ==================== Lloyd 质心的信息获取（用户裁定） ====================
@@ -1217,11 +1232,25 @@ class UAVEnvV3:
         self._u_stale = self.u.copy()
         return self.obs()
 
+    @property
+    def b_scale(self) -> float:
+        """带宽维动作尺度（2026-11-02 rizvi3 尺度修复，docs/03 §11.5）。
+
+        场步长、残差上界、critic 归一化共用的 b 维尺度 =
+        min(DB_MAX, 0.5×b_total)。0.5 系数保证既有场景全部逐位不变：
+        主表 100 MHz→50→5、cheng7 140→70→5、jiang5 45→22.5→5、
+        shen3 10→5，均等于现行 DB_MAX；唯独 rizvi3（0.045 MHz）
+        缩到 0.0225，场单步 ≤ 0.0225×0.2 = 10% 总带宽（shen3 实证
+        可用的比例），杜绝"单步 22 倍总带宽 → _project 归一 →
+        bang-bang"的病灶（纯势场同崩，非学习问题）。
+        """
+        return min(DB_MAX, 0.5 * self.b_total)
+
     def step(self, d_act: np.ndarray):
         """d_act: (N,5) [Δb,Δπ,Δp,Δx,Δy] 逐维裁剪 → (obs, r, done, info)。"""
         d_act = np.atleast_2d(d_act)
         self.b = np.clip(
-            self.b + np.clip(d_act[:, 0], DB_MIN, DB_MAX),
+            self.b + np.clip(d_act[:, 0], -self.b_scale, self.b_scale),
             1e-3, self.b_total)       # 带宽个体上下界（2026-10-27 钳制令）
         self.pi = np.clip(self.pi + np.clip(d_act[:, 1], DPI_MIN,
                                              DPI_MAX), -3.0, 3.0)   # 优先级域（对齐 obs 使用点既有 clip 语义）

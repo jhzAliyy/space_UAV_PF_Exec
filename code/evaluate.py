@@ -58,9 +58,19 @@ class Controller:
                 raise FileNotFoundError(tdir.name)
             sd = torch.load(ck, map_location="cpu", weights_only=False)
             # v2 残差口径：ckpt 必须带 res_frac；缺键 = 旧版，直接报错。
+            # b 维尺度（rizvi3 修复）：训练端落盘 env.b_scale，评估端断言
+            # 与评估环境一致后按它重建残差上界，防场景/尺度错配。
+            # 缺键 = 修复前 ckpt（在跑 9 格），其 b 维尺度恒为全局 5.0，
+            # 且这些场景 env.b_scale 也是 5.0——回退 5.0 语义精确。
+            from pfrl import act_scale_of
+            _bs = float(sd.get("b_scale", 5.0))
+            assert abs(_bs - env.b_scale) < 1e-9, (
+                f"ckpt b_scale={_bs} 与评估环境 b_scale={env.b_scale} 不一致"
+                f"（task={ckpt_task}）——场景或代码版本错配")
             actor = ResidualActor(widths=tuple(sd["widths"]),
                                   p=float(sd["dropout_p"]),
-                                  res_frac=float(sd["res_frac"]))
+                                  res_frac=float(sd["res_frac"]),
+                                  act_scale=act_scale_of(env))
             actor.load_state_dict(sd["policy"])
             # 臂配置从 ckpt 复原：训练用哪支场，评估就用哪支
             field = GlobalField(mode=sd["field_mode"],
