@@ -11,27 +11,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Download flow_n30
+      - name: Download real n12 artifacts
         uses: actions/download-artifact@v4
         with:
-          run-id: "41444826741"
+          run-id: "41470493599"
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: dl
-          name: ckpt_flow_n30_pfrl
+          pattern: ckpt_n12_*_real
 
       - name: Strip snaps, keep triads
         run: |
           find dl -type d -name snaps -exec rm -rf {} + || true
           find dl -type f | sort
 
-      - name: Push to ckpt_r3 branch
+      - name: Push to ckpt_r4 branch
         run: |
           cd dl
           git init -q
           git config user.name "ckpt-bot"
           git config user.email "bot@users.noreply.github.com"
-          git checkout -q -b ckpt_r3
+          git checkout -q -b ckpt_r4
           git add -A
-          git commit -qm "ckpt triads r3: flow_n30"
-          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ckpt_r3
+          git commit -qm "ckpt triads r4: real n12 flow+burst"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ckpt_r4
           echo PUSHED

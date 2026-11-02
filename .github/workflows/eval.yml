@@ -12,7 +12,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { tag: flow_n30, art: ckpt_flow_n30_pfrl, rid: "41444826741", dxy: 0.5, line: "pfrl 5 0 flow 1 0 main 30 flow_n30_pfrl_tau5_s0_umi_srand" }
+          - { tag: n12_flow_real, art: ckpt_n12_flow_real, rid: "41470493599", dxy: 0.5, rob: 1, line: "pfrl 5 0 flow 1 0 main 12 flow_pfrl_real_tau5_s0_umi_srand" }
+          - { tag: n12_burst_real, art: ckpt_n12_burst_real, rid: "41470493599", dxy: 0.5, rob: 1, line: "pfrl 5 0 burst 1 0 main 12 burst_pfrl_real_tau5_s0_umi_srand" }
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +63,7 @@ jobs:
           echo "${{ matrix.line }}" > /tmp/ev.txt
           cat /tmp/ev.txt
           OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
-          PF_CHANNEL=umi PF_SHADOW_DB=random PF_DXY_MAX=${{ matrix.dxy }} \
+          PF_CHANNEL=umi PF_SHADOW_DB=random PF_DXY_MAX=${{ matrix.dxy }} PF_REAL_OBS=${{ matrix.rob }} \
             python evaluate.py /tmp/ev.txt "$GITHUB_WORKSPACE/eval_${{ matrix.tag }}.csv"
           echo ===RESULT===
           cat "$GITHUB_WORKSPACE/eval_${{ matrix.tag }}.csv"
