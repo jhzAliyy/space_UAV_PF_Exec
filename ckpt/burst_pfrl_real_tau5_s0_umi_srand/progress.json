@@ -1,0 +1,1 @@
+{"task": "burst_pfrl_real_tau5_s0_umi_srand", "rollout": 900, "total": 1200, "env_steps": 230400, "early_stop": true, "mean_ret_recent": 0.5940623980722982, "elapsed_min": 68.0}

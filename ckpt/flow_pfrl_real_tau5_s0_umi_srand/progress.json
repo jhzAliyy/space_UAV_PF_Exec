@@ -1,0 +1,1 @@
+{"task": "flow_pfrl_real_tau5_s0_umi_srand", "rollout": 725, "total": 1200, "env_steps": 185600, "early_stop": true, "mean_ret_recent": 0.8246984695663935, "elapsed_min": 86.5}
