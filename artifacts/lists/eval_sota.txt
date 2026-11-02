@@ -1,0 +1,12 @@
+ddpga 5 0 flow 1 0.0 umi flow_ddpga_tau5_s0_umi_srand
+ddpga 5 0 burst 1 0.0 umi burst_ddpga_tau5_s0_umi_srand
+ddpga 5 0 flow 1 0.0 umi flow_n30_ddpga_tau5_s0_umi_srand
+ddpga 5 0 burst 1 0.0 umi burst_n30_ddpga_tau5_s0_umi_srand
+dqnm 5 0 flow 1 0.0 umi flow_n30_dqnm_tau5_s0_umi_srand
+dqnm 5 0 burst 1 0.0 umi burst_n30_dqnm_tau5_s0_umi_srand
+ddpga 5 0 flow 1 0.0 umi flow_n60_ddpga_tau5_s0_umi_srand
+ddpga 5 0 burst 1 0.0 umi burst_n60_ddpga_tau5_s0_umi_srand
+dqnm 5 0 flow 1 0.0 umi flow_n60_dqnm_tau5_s0_umi_srand
+dqnm 5 0 burst 1 0.0 umi burst_n60_dqnm_tau5_s0_umi_srand
+ddpga 5 0 flow 1 0.0 uma 7 native_ddpga_cheng7 cheng7
+dqnm 5 0 flow 1 0.0 uma 3 native_dqnm_rizvi3 rizvi3
