@@ -11,27 +11,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Download real n12 artifacts
+      - name: Download real n12 artifacts (merged)
         uses: actions/download-artifact@v4
         with:
           run-id: "41470493599"
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: dl
           pattern: ckpt_n12_*_real
+          merge-multiple: true
 
       - name: Strip snaps, keep triads
         run: |
           find dl -type d -name snaps -exec rm -rf {} + || true
           find dl -type f | sort
 
-      - name: Push to ckpt_r4 branch
+      - name: Push to ckpt_r4b branch
         run: |
           cd dl
           git init -q
           git config user.name "ckpt-bot"
           git config user.email "bot@users.noreply.github.com"
-          git checkout -q -b ckpt_r4
+          git checkout -q -b ckpt_r4b
           git add -A
-          git commit -qm "ckpt triads r4: real n12 flow+burst"
-          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ckpt_r4
+          git commit -qm "ckpt triads r4b: real n12 flow+burst (merged layout)"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ckpt_r4b
           echo PUSHED
