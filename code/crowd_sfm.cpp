@@ -6,7 +6,18 @@
 #include "sfm.hpp"
 
 #include <cmath>
+#include <cstdlib>
 #include <vector>
+
+// 人群步进线程数（OpenMP）。默认 1 = 历史口径 bit 级不变；
+// PF_CROWD_THREADS>1 启用多核：每 agent 独立计算、邻居集为快照拷贝、
+// SocialForceModel 全方法 const 无内部可变状态——多线程结果与单线程
+// 逐位一致（同 seed 同轨迹）。
+static inline int pf_crowd_nt(void) {
+  const char* e = getenv("PF_CROWD_THREADS");
+  int nt = e ? atoi(e) : 1;
+  return nt > 0 ? nt : 1;
+}
 
 struct CrowdState {
   std::vector<sfm::Agent> agents;
@@ -78,7 +89,7 @@ int crowd_step(void* handle, double dt, double* pos_out) {
     cell_of[(size_t)cy * (size_t)ncx + (size_t)cx].push_back(i);
   }
   sfm::SocialForceModel& model = sfm::SocialForceModel::getInstance();
-#pragma omp parallel num_threads(1)
+#pragma omp parallel num_threads(pf_crowd_nt())
   {
     std::vector<sfm::Agent> near_agents;            // 线程私有邻居集
 #pragma omp for schedule(dynamic, 64)
