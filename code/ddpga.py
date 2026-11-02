@@ -49,9 +49,20 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+# torch 线程数（PF_TORCH_THREADS>0 生效）：小 MLP 多线程负优化，与 C 核
+# OpenMP（OMP_NUM_THREADS）解耦——同 pfrl.py 的改造。
+try:
+    _tt_sota = int(os.environ.get("PF_TORCH_THREADS", "0") or 0)
+except NameError:
+    import os as _os
+    _tt_sota = 0
+if _tt_sota > 0:
+    torch.set_num_threads(_tt_sota)
+
+
 sys.stdout.reconfigure(encoding="utf-8")
-from uav_env import (baseline_scene, B_TOTAL, CKPT_EVERY, DEMAND_SCALE_ANCHOR,  # noqa: E402
-                    DXY_MAX, EARLY_THR, EARLY_WIN,
+from uav_env import (baseline_scene, CKPT_EVERY, DEMAND_SCALE_ANCHOR,  # noqa: E402
+                    DXY_MAX, EARLY_SHORT, EARLY_THR, EARLY_WIN,
                     EPISODE_LEN, FIELD_H, FIELD_W, N0_DBM, P_REF_DBM,
                     TOTAL_ROLLOUTS)
 from uav_env import UAVEnvV3                                      # noqa: E402
@@ -69,8 +80,10 @@ LR = 1e-3              # §V-A 正文：actor/critic 学习率 0.001
 H1, H2 = 128, 64       # Fig.3/4：两层隐层 128、64，ReLU
 
 # ==================== 论文未给数值的项（按本环境标度） ====================
-XI = 1.0 / B_TOTAL     # eq.14 ξ_th：论文只称“reward coefficient”，取带宽总量归一到
-                       #   与 REWARD_U8 同量级的吞吐标度
+# 2026-11-02 尺度修复（基线稻草人）：ξ_th 原取 1/B_TOTAL（n12 的 100 MHz），
+# 不随场景 b_total 缩放。n200 的 b_total=1666.7 MHz 时奖励比场景归一化值
+# 大 16.7 倍；cheng7=140 MHz 时也只差 1.4 倍。现改为逐场景 1/env.b_total，
+# 使不同规模的奖励处于同一量级。见 paper_reward()。
 D_MIN = 20.0           # eq.13h d_min：UAV 间安全距离（论文未给，取 20 m）
 PEN_COL = 1.0          # eq.14 碰撞惩罚幅度 −γ
 PEN_BD = 1.0           # eq.14 越界惩罚幅度 −φ
@@ -160,11 +173,14 @@ def paper_reward(env) -> float:
 
     R_n 取 GU 的可达速率（eq.10），不按需求截断——截断后需求已满足的区间
     里奖励对提高 SINR 失去梯度，与论文的"速率最大化"目标不符。
+
+    2026-11-02 尺度修复：ξ_th 改为 1/env.b_total，逐场景归一；原实现用
+    全局 B_TOTAL=100 MHz，n200 的 1666.7 MHz 会使奖励尺度偏大 16.7 倍。
     """
     Tu = (env.assoc * env._R).sum(axis=0)
     Rsum = float(Tu.sum())
     fJ = Rsum * Rsum / (len(Tu) * float((Tu * Tu).sum()) + 1e-12)
-    r = XI * fJ * Rsum
+    r = (1.0 / max(float(env.b_total), 1e-9)) * fJ * Rsum
     p = env.pos
     if len(p) > 1:
         dd = np.sqrt(((p[:, None, :] - p[None, :, :]) ** 2).sum(-1))
@@ -409,16 +425,16 @@ def train(mode: str, tau: float, seed: int,
                   f"q={qm_v:.2f} {(time.time()-t0)/60:.1f}min", flush=True)
         ret_curve.append(float(np.mean(rets[-20 * ROLLOUT:])))
         # 早停：滑动判定窗 200 回合；只解除硬回合数下限，判据不变。
-        if ((ro + 1) % 25 == 0 and len(ret_curve) >= 2 * EARLY_WIN):
-            m2 = float(np.mean(ret_curve[-EARLY_WIN:]))
-            m1 = float(np.mean(ret_curve[-2 * EARLY_WIN:-EARLY_WIN]))
-            best_w = max(float(np.mean(ret_curve[i:i + EARLY_WIN]))
-                         for i in range(0, len(ret_curve) - EARLY_WIN + 1))
-            if (abs(m2 - m1) <= EARLY_THR * max(abs(m1), 1e-6)
-                    and m2 >= best_w - EARLY_THR * max(abs(best_w), 1e-6)):
-                print(f"[{task}] 早停@{ro+1}轮 窗口改善|{m2:.4f}-{m1:.4f}|"
-                      f"<{EARLY_THR:.1%} 且达历史最佳窗口 {best_w:.4f}",
-                      flush=True)
+        if ((ro + 1) % 25 == 0
+                and len(rets) >= 2 * EARLY_WIN * ROLLOUT):
+            short = float(np.mean(rets[-EARLY_SHORT * ROLLOUT:]))
+            long = float(np.mean(rets[-EARLY_WIN * ROLLOUT:]))
+            diff = short - long
+            band = EARLY_THR * max(abs(long), 1e-6)
+            if abs(diff) <= band:
+                print(f"[{task}] 早停@{ro+1}轮 近{EARLY_SHORT}轮={short:.4f} "
+                      f"近{EARLY_WIN}轮={long:.4f} 差={diff:+.4f} "
+                      f"|差|<{EARLY_THR:.1%} 无提升", flush=True)
                 torch.save({"policy": actor.state_dict(),
                             "critic": critic.state_dict(),
                             "opt_a": opt_a.state_dict(),

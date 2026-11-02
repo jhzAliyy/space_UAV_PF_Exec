@@ -30,6 +30,17 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+# torch 线程数（PF_TORCH_THREADS>0 生效）：小 MLP 多线程负优化，与 C 核
+# OpenMP（OMP_NUM_THREADS）解耦——同 pfrl.py 的改造。
+try:
+    _tt_sota = int(os.environ.get("PF_TORCH_THREADS", "0") or 0)
+except NameError:
+    import os as _os
+    _tt_sota = 0
+if _tt_sota > 0:
+    torch.set_num_threads(_tt_sota)
+
+
 sys.stdout.reconfigure(encoding="utf-8")
 from uav_env import (OBS_DIM, EPISODE_LEN, P_REF_DBM, N0_DBM,        # noqa: E402
                     DEMAND_SCALE_ANCHOR, CKPT_EVERY, TOTAL_ROLLOUTS,
