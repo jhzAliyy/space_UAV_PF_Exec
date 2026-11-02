@@ -40,3 +40,11 @@ EARLY_THR = 0.005
 # n_over=0（验收线全过）。通信三维给防关死底 0.2（sigmoid 饱和曾把
 # 恢复方向完全掐灭）。悬停不受影响：缺口=0 时任意 σ 都乘出 0。
 SIG_LO = np.array([0.2, 0.2, 0.2, 0.6], dtype=np.float32)
+
+# ---- 残差执行器 v2（2026-11-02 用户裁定 B 路，docs/06）----
+# 动作 = clip(场指令 + Δ)，Δ = RES_FRAC×ACT_SCALE × tanh(logit)，逐维有界。
+# Δ≡0 严格退化为纯势场；历史依据：残差形态曾真正超越纯势场，后遭 critic
+# 噪声 bug 污染；critic 已改评执行动作（2026-11-02 修复），残差形态复活。
+RES_FRAC = 0.4        # 修正项逐维上界 = RES_FRAC × ACT_SCALE
+LOAD_SLOPE = 1.0      # û > U_OVER 线性下坡斜率（恢复期给残差学习梯度）
+LOAD_FLOOR = -3.0     # 负载项深地板（有界，护 critic 目标）

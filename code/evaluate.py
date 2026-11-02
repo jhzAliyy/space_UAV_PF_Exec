@@ -20,7 +20,7 @@ from uav_env import (ACT_DIM, CKPT_ROOT, EPISODE_LEN, N0_DBM, P_REF_DBM,
                      decode_ddp, norm_obs, select81)
 from field import GlobalField
 from heuristics import make_baseline
-from pfrl import ExecActor, ExecCtrl
+from pfrl import ResidualActor, ExecCtrl
 
 CHAN_MAP = {"main": (None, None), "uma35": (None, 3.5e9),
             "rma2": ("rma", None), "rma35": ("rma", 3.5e9)}
@@ -57,26 +57,18 @@ class Controller:
             if not ck.exists():
                 raise FileNotFoundError(tdir.name)
             sd = torch.load(ck, map_location="cpu", weights_only=False)
-            # 速度下限随 ckpt 复原（2026-11-01）：新 ckpt 带 sig_lo，
-            # forward 用同一支下限；旧 ckpt（无该键）回退 0 向量 =
-            # 旧全域 sigmoid 行为，冻结消融臂的评估不受影响。
-            sig_lo = sd.get("sig_lo")
-            actor = ExecActor(widths=tuple(sd.get("widths", (16, 32, 64, 32, 16))),
-                              p=float(sd.get("dropout_p", 0.1)),
-                              sig_lo=(sig_lo if sig_lo is not None
-                                      else np.zeros(4, dtype=np.float32)))
+            # v2 残差口径：ckpt 必须带 res_frac；缺键 = 旧版，直接报错。
+            actor = ResidualActor(widths=tuple(sd["widths"]),
+                                  p=float(sd["dropout_p"]),
+                                  res_frac=float(sd["res_frac"]))
             actor.load_state_dict(sd["policy"])
             # 臂配置从 ckpt 复原：训练用哪支场，评估就用哪支
-            field = GlobalField(mode=sd.get("field_mode", "closed"),
-                                map_name=(sd.get("map_name") or None),
-                                u_star=sd.get("u_star", None))
-            # 固定比例臂必须按训练时同一支执行器复原：该臂训练期 σ 恒为
-            # 设定值，actor 从未作用于环境，用 actor 评估等于换了策略。
-            eta = float(sd.get("eta_fixed", -1.0))
-            if "eta_fixed" not in sd and tdir.name.startswith("ab_eta1_"):
-                eta = 1.0                     # 补丁前落盘的旧 ckpt
+            field = GlobalField(mode=sd["field_mode"],
+                                map_name=(sd["map_name"] or None),
+                                u_star=sd["u_star"])
+            eta = float(sd["eta_fixed"])
             self.ctrl = ExecCtrl(actor, field, eta_fixed=eta,
-                                 with_pos=bool(sd.get("with_pos", True)))
+                                 with_pos=bool(sd["with_pos"]))
         elif mode == "pfg":
             self.ctrl = None
             self.field = GlobalField(mode="closed", u_star=0.8)

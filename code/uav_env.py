@@ -10,10 +10,11 @@ from pathlib import Path
 
 import numpy as np
 
-from config import (CKPT_EVERY, EARLY_SHORT, EARLY_THR, EARLY_WIN, EPISODE_LEN,
-                    OBS_NORM, PF_RELAX, PF_U_MAP, PI_DUAL_STEP,
-                    PI_MAX, PI_MIN, R_MIN, SE_REF, SIGMA, TOTAL_ROLLOUTS,
-                    U_STAR, W_BAL, W_EFF, W_LOAD)
+from config import (CKPT_EVERY, EARLY_SHORT, EARLY_THR, EARLY_WIN,
+                    EPISODE_LEN, LOAD_FLOOR, LOAD_SLOPE, OBS_NORM, PF_RELAX,
+                    PF_U_MAP, PI_DUAL_STEP, PI_MAX, PI_MIN, R_MIN, SE_REF,
+                    SIGMA, TOTAL_ROLLOUTS, U_OVER, U_STAR, W_BAL, W_EFF,
+                    W_LOAD)
 
 U_STAR_DEFAULT = U_STAR          # 兼容旧导入名；值来自 config
 
@@ -1326,7 +1327,13 @@ class UAVEnvV3:
         d2 = deg * ue ** 2 - 2.0 * ue * s1 + s2
         d2 = np.maximum(d2, 0.0)                 # 数值非负
         bal = 1.0 / (1.0 + d2 / (deg + 1.0))
-        load = np.maximum(R_MIN, 1.0 - ((ue - U_STAR) / SIGMA) ** 2)
+        # 2026-11-02 v2（docs/06）：û>U_OVER 区从平底改线性下坡——过载越深
+        # 罚越重（有界到 LOAD_FLOOR），恢复速度由此获得学习梯度；û≤U_OVER 段不变。
+        load = 1.0 - ((ue - U_STAR) / SIGMA) ** 2
+        load = np.where(ue > U_OVER,
+                        np.maximum(LOAD_FLOOR,
+                                   R_MIN - LOAD_SLOPE * (ue - U_OVER)),
+                        np.maximum(R_MIN, load))
         eff = np.clip(self.T / max(self.b_bar, 1e-9) / SE_REF, 0.0, 1.0)
         return W_BAL * bal + W_LOAD * load + W_EFF * eff
 
