@@ -23,6 +23,11 @@ jobs:
         with: { python-version: '3.11' }
       - name: deps
         run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      - name: fetch channel tables
+        run: |
+          cd env_data/channel
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_60_uma_2ghz.npz
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_100_uma_2ghz.npz
       - name: real code overlay
         run: |
           wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
