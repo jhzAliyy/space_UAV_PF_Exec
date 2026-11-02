@@ -176,6 +176,13 @@ def act_scale_of(env) -> np.ndarray:
 # 训练与评估必须同口径开启 PF_REAL_OBS=1）
 REAL_OBS = os.environ.get("PF_REAL_OBS", "") == "1"
 
+# torch 线程数（PF_TORCH_THREADS>0 时生效）：小 MLP 前向/反向在多线程下
+# 负优化（线程同步开销 > 收益，CNB 实证 OMP1 快于 OMP4）；C 核的 OpenMP
+# 由 OMP_NUM_THREADS 独立控制，二者解耦。
+_tt = int(os.environ.get("PF_TORCH_THREADS", "0") or 0)
+if _tt > 0:
+    torch.set_num_threads(_tt)
+
 
 class RealObsGate:
     """决策输入挡板：user_pos 每 REAL_OBS_EVERY 步刷新一次快照

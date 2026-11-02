@@ -1,0 +1,63 @@
+name: speed100
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tag: omp4_default, omp: "4", tt: "0" }
+          - { tag: omp4_torch1, omp: "4", tt: "1" }
+          - { tag: omp2_torch1, omp: "2", tt: "1" }
+          - { tag: omp1_torch1, omp: "1", tt: "1" }
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        shell: bash
+        run: |
+          python -m pip install -U pip
+          pip install numpy gymnasium
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install mujoco
+
+      - name: Build C cores
+        shell: bash
+        run: |
+          cd code
+          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+          g++ -O3 -fopenmp -shared -fPIC crowd_sfm.cpp -o crowd_sfm.so -I shim -I ../deps/lightsfm/include
+
+      - name: Fetch chan_100 table
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download chan-tables --repo ${{ github.repository }} \
+            --pattern "chan_100_uma_2ghz.npz" \
+            --output env_data/channel/chan_100_uma_2ghz.npz
+          ls -la env_data/channel/
+
+      - name: Probe n100 (30 rollouts)
+        shell: bash
+        run: |
+          set -e
+          cd code
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          S=$(date +%s)
+          OMP_NUM_THREADS=${{ matrix.omp }} MKL_NUM_THREADS=${{ matrix.omp }} OPENBLAS_NUM_THREADS=${{ matrix.omp }} \
+          PF_CHANNEL=umi PF_SHADOW_DB=random PF_DXY_MAX=0.5 PF_TORCH_THREADS=${{ matrix.tt }} \
+            python pfrl.py --mode pfrl --tau 5 --seed 0 --scene flow --n-uav 100 \
+            --total-rollouts 30 --fresh --task speed100_${{ matrix.tag }} 2>&1 | tail -2
+          E=$(date +%s)
+          T=$((E-S))
+          python -c "t=$T; per=t/30.0; est=per*1200; budget=355*60-420; fit='YES' if est<budget else 'NO'; print(f'[SPEED100 ${{ matrix.tag }}] omp=${{ matrix.omp }} torch=${{ matrix.tt }} total_30={t}s per={per:.1f}s est_1200={est:.0f}s ({est/3600:.2f}h) budget={budget}s fit={fit}')"
+          rm -rf ckpt/speed100_${{ matrix.tag }}
