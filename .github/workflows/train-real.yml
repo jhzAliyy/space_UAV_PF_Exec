@@ -34,8 +34,7 @@ jobs:
         with: { python-version: '3.11' }
       - name: deps
         run: |
-          pip install -q torch --index-url https://download.pytorch.org/whl/cpu
-          cd deps/lightsfm && make -s 2>/dev/null || true
+          pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
       - name: real code overlay (learned cells)
         if: matrix.mode == 'learned'
         run: |
