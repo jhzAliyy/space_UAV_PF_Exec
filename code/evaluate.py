@@ -146,7 +146,10 @@ class Controller:
 
 def rollout(env, ctrl, tag, steps):
     """确定性执行 steps 步；pre = [700,1000]，post = 末 300 步。"""
+    from pfrl import RealObsGate
+    gate = RealObsGate(env, env.seed)
     env.reset()
+    gate.snap = None
     ctrl.reset()                          # 有状态智能体的回合边界
     prev = env.pos.copy()
     travel = 0.0
@@ -154,7 +157,7 @@ def rollout(env, ctrl, tag, steps):
         env._sinr.max(axis=0), 1e-30)) >= COV_DB))]
     for _ in range(steps):
         ctrl.begin_step(env, explore_field=False)
-        d, _, _ = ctrl.act(env, deterministic=True)
+        d, _, _ = gate(lambda: ctrl.act(env, deterministic=True))
         env.step(d)                       # 超过 EPISODE_LEN 也继续跑，不重置
         travel += float(np.abs(env.pos - prev).sum())
         prev = env.pos.copy()

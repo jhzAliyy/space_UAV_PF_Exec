@@ -9,7 +9,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { tag: native_pfrl_rizvi3, scene: static, n: 3, mode: pfrl, dxy: 0.5, preset: rizvi3 }
+          - { tag: n12_flow_real, scene: flow, n: 12, mode: pfrl, dxy: 0.5, real: 1, task: flow_pfrl_real_tau5_s0_umi_srand }
+          - { tag: n12_burst_real, scene: burst, n: 12, mode: pfrl, dxy: 0.5, real: 1, task: burst_pfrl_real_tau5_s0_umi_srand }
+          - { tag: n30_flow_real, scene: flow, n: 30, mode: pfrl, dxy: 0.5, real: 1, task: flow_n30_pfrl_real_tau5_s0_umi_srand }
+          - { tag: n30_burst_real, scene: burst, n: 30, mode: pfrl, dxy: 0.5, real: 1, task: burst_n30_pfrl_real_tau5_s0_umi_srand }
     timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
@@ -57,15 +60,12 @@ jobs:
           set -e
           cd code
           export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
-          PA=""
-          if [ -n "${{ matrix.preset }}" ]; then PA="--preset ${{ matrix.preset }}"; fi
           S=$(date +%s)
           OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
-          PF_CHANNEL=umi PF_SHADOW_DB=random PF_DXY_MAX=${{ matrix.dxy }} \
+          PF_CHANNEL=umi PF_SHADOW_DB=random PF_DXY_MAX=${{ matrix.dxy }} PF_REAL_OBS=${{ matrix.real }} \
             python ${{ matrix.mode }}.py --mode ${{ matrix.mode }} --tau 5 \
             --seed 0 --scene ${{ matrix.scene }} --n-uav ${{ matrix.n }} \
-            --total-rollouts 30 --fresh $PA \
-            --task speed_${{ matrix.tag }} 2>&1 | tail -3
+            --total-rollouts 30 --fresh --task speed_${{ matrix.tag }} 2>&1 | tail -3
           E=$(date +%s)
           T=$((E-S))
           python -c "import sys; t=$T; per=t/30.0; est=per*1200; budget=355*60-420; fit='YES' if est<budget else 'NO'; print(f'[SPEED] total_30={t}s per_rollout={per:.1f}s est_1200={est:.0f}s ({est/3600:.2f}h) budget={budget}s fit={fit}'); sys.exit(0 if fit=='YES' else 3)"
@@ -75,14 +75,12 @@ jobs:
         run: |
           cd code
           export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
-          PA=""
-          if [ -n "${{ matrix.preset }}" ]; then PA="--preset ${{ matrix.preset }} --task ${{ matrix.tag }}"; fi
           rm -rf ckpt/speed_${{ matrix.tag }}
           OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
-          PF_CHANNEL=umi PF_SHADOW_DB=random PF_DXY_MAX=${{ matrix.dxy }} \
+          PF_CHANNEL=umi PF_SHADOW_DB=random PF_DXY_MAX=${{ matrix.dxy }} PF_REAL_OBS=${{ matrix.real }} \
             python ${{ matrix.mode }}.py --mode ${{ matrix.mode }} --tau 5 \
             --seed 0 --scene ${{ matrix.scene }} --n-uav ${{ matrix.n }} \
-            --total-rollouts 1200 --fresh $PA 2>&1 | tee train_${{ matrix.tag }}.log
+            --total-rollouts 1200 --fresh --task ${{ matrix.task }} 2>&1 | tee train_${{ matrix.tag }}.log
 
       - name: Upload ckpt
         if: always()

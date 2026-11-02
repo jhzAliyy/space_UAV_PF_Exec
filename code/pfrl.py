@@ -26,7 +26,7 @@ import torch.nn.functional as F
 
 sys.stdout.reconfigure(encoding="utf-8")   # 日志固定 UTF-8，调度脚本按字面量匹配
 
-from config import RES_FRAC
+from config import RES_FRAC, REAL_OBS_EVERY, REAL_OBS_BLUR_M
 from field import GlobalField
 from replay import ReplayBuffer
 from uav_env import (ACT_DIM, ACT_HIGH, ACT_LOW, ACT_SCALE, CKPT_EVERY,
@@ -172,6 +172,35 @@ def act_scale_of(env) -> np.ndarray:
     return s
 
 
+# 真实全局量退化开关（用户裁定协议：0.5 s 过期 + 10 m 位置噪声，组合；
+# 训练与评估必须同口径开启 PF_REAL_OBS=1）
+REAL_OBS = os.environ.get("PF_REAL_OBS", "") == "1"
+
+
+class RealObsGate:
+    """决策输入挡板：user_pos 每 REAL_OBS_EVERY 步刷新一次快照
+    （真值 + REAL_OBS_BLUR_M 高斯噪声），两次刷新之间决策用过期快照；
+    env 物理推进始终用真实位置。同一 env.t 下的多次决策共享同一快照。
+    u 的 0.5 s 级滞后由关联平滑 tau_u=5 天然提供，不在此重复注入。"""
+
+    def __init__(self, env, seed: int):
+        self.env, self.snap = env, None
+        self.rng = np.random.default_rng(int(seed) + 4242)
+
+    def __call__(self, fn):
+        if not REAL_OBS:
+            return fn()
+        if self.snap is None or self.env.t % REAL_OBS_EVERY == 0:
+            self.snap = self.env.user_pos + self.rng.normal(
+                0.0, REAL_OBS_BLUR_M, self.env.user_pos.shape)
+        true_pos = self.env.user_pos
+        self.env.user_pos = self.snap
+        try:
+            return fn()
+        finally:
+            self.env.user_pos = true_pos
+
+
 def pf_obs(env, a_field: np.ndarray) -> np.ndarray:
     """观测定标：12 维逐维除以 OBS_NORM + 3 个缺口维
     [|a_field_b|/s_b, |a_field_π|/s_π, |a_field_xy|/s_xy]。
@@ -275,6 +304,8 @@ def run_name(args: Args) -> str:
 
 def train(args: Args) -> Path:
     task = args.task or run_name(args)
+    if REAL_OBS and not args.task:
+        task = task.replace("_pfrl_", "_pfrl_real_")
     tdir = CKPT_ROOT / task
     tdir.mkdir(parents=True, exist_ok=True)
 
@@ -332,8 +363,10 @@ def train(args: Args) -> Path:
     snaps = tdir / "snaps"
     snaps.mkdir(parents=True, exist_ok=True)
 
+    gate = RealObsGate(env, args.seed)
     env.reset()
-    a_field = field.act(env, with_pos=args.with_pos)
+    gate.snap = None
+    a_field = gate(lambda: field.act(env, with_pos=args.with_pos))
     obs = pf_obs(env, a_field)
     rets: list = []
     cl_v = qm_v = sm_v = dm_v = 0.0
@@ -401,11 +434,11 @@ def train(args: Args) -> Path:
                 a = np.clip(a_field + delta, ACT_LOW[None, :],
                             ACT_HIGH[None, :])
             else:
-                a, delta, _ = ctrl.act(env, deterministic=False,
-                                       a_field=a_field)
+                a, delta, _ = gate(lambda: ctrl.act(
+                    env, deterministic=False, a_field=a_field))
                 delta = delta.astype(np.float32)
             next_obs, r, done, _ = env.step(a)
-            next_a_field = field.act(env, with_pos=args.with_pos)
+            next_a_field = gate(lambda: field.act(env, with_pos=args.with_pos))
             nobs = pf_obs(env, next_a_field)
             # nan/inf 护栏：非有限转移坚决不入池，只告警。
             if (np.isfinite(nobs).all() and np.isfinite(r).all()
@@ -479,7 +512,8 @@ def train(args: Args) -> Path:
             if done:
                 drain_stats()
                 env.reset()
-                a_field = field.act(env, with_pos=args.with_pos)
+                gate.snap = None
+                a_field = gate(lambda: field.act(env, with_pos=args.with_pos))
                 obs = pf_obs(env, a_field)
                 for k in seg_keys:
                     seg[k].clear()
