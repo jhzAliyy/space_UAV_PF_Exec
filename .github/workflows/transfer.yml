@@ -11,13 +11,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Download real n12 artifacts (merged)
+      - name: Download ddpga artifacts
         uses: actions/download-artifact@v4
         with:
-          run-id: "41470493599"
+          run-id: "41356546130"
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: dl
-          pattern: ckpt_n12_*_real
+          pattern: ckpt_*_ddpga
+          merge-multiple: true
+
+      - name: Download dqnm artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: "41356546130"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dl
+          pattern: ckpt_*_dqnm
           merge-multiple: true
 
       - name: Strip snaps, keep triads
@@ -25,14 +34,14 @@ jobs:
           find dl -type d -name snaps -exec rm -rf {} + || true
           find dl -type f | sort
 
-      - name: Push to ckpt_r4b branch
+      - name: Push to ckpt_r5 branch
         run: |
           cd dl
           git init -q
           git config user.name "ckpt-bot"
           git config user.email "bot@users.noreply.github.com"
-          git checkout -q -b ckpt_r4b
+          git checkout -q -b ckpt_r5
           git add -A
-          git commit -qm "ckpt triads r4b: real n12 flow+burst (merged layout)"
-          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ckpt_r4b
+          git commit -qm "ckpt triads r5: SOTA ddpga/dqnm n12+n30 (fixed-env batch)"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ckpt_r5
           echo PUSHED
