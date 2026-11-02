@@ -3,7 +3,7 @@
 
 接口对标 cleanrl_utils.buffers.ReplayBuffer 的 add / sample 语义；
 本实现按单环境展开，字段名 obs / next_obs / actions / rewards / dones。
-v2（2026-11-02）：增存 a_field / next_a_field——TD3 目标与 actor 损失
+2026-11-02：增存 a_field / next_a_field——TD3 目标与 actor 损失
 都要用当场纯势场动作组合修正项。
 """
 from __future__ import annotations

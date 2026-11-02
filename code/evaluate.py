@@ -57,7 +57,7 @@ class Controller:
             if not ck.exists():
                 raise FileNotFoundError(tdir.name)
             sd = torch.load(ck, map_location="cpu", weights_only=False)
-            # v2 残差口径：ckpt 必须带 res_frac；缺键 = 旧版，直接报错。
+            # 残差口径：ckpt 必须带 res_frac；缺键 = 旧版，直接报错。
             # b 维尺度（rizvi3 修复）：训练端落盘 env.b_scale，评估端断言
             # 与评估环境一致后按它重建残差上界，防场景/尺度错配。
             # 缺键 = 修复前 ckpt（在跑 9 格），其 b 维尺度恒为全局 5.0，

@@ -33,7 +33,7 @@ import torch.nn as nn
 sys.stdout.reconfigure(encoding="utf-8")
 from uav_env import (OBS_DIM, EPISODE_LEN, P_REF_DBM, N0_DBM,        # noqa: E402
                     DEMAND_SCALE_ANCHOR, CKPT_EVERY, TOTAL_ROLLOUTS,
-                    EARLY_WIN, EARLY_THR, baseline_scene)
+                    EARLY_SHORT, EARLY_WIN, EARLY_THR, baseline_scene)
 from uav_env import UAVEnvV3                                    # noqa: E402
 from uav_env import (N_ACT81, invalid_mask81, select81, norm_obs)  # noqa: E402
 from uav_env import CKPT_ROOT, RESULT_DIR  # noqa: E402
@@ -63,7 +63,7 @@ class QNet(nn.Module):
 
 
 class DQNWrap:
-    """eval 加载载体（v2 验证件范式：训练器导出，禁止内联重写）。"""
+    """eval 加载载体（验证件范式：训练器导出，禁止内联重写）。"""
 
     def __init__(self, qnet: QNet):
         self.qnet = qnet
@@ -131,10 +131,19 @@ def dqnm_reward(env) -> float:
     λ 为 QoS 惩罚系数，默认为 0，UAV 选择了违反 QoS 的动作时递增
     （"λ increases if a UAV chooses an action that denies QoS"）。
     本环境无显式 QoS 门限动作，取"该机负载超过可用容量"（u>1）为
-    否定 QoS 的等价判据，λ 记违反机数。
+    否定 QoS 的等价判据。
+
+    2026-11-02 尺度修复（基线稻草人）：原实现 λ 记**违反机数**。原生
+    n=3 时 λ∈[0,3]；直接搬到 n=100/200 时 λ 可达 100/200，2^λ 把奖励
+    压到 1e-30 以下（n100 实测训练末段 mean_ret20=0.0375，n200 更低），
+    基线收不到学习信号。现按机队比例归一：
+        λ = 3 · (#over / N)
+    n=3 时逐位退化为原式；任意规模都落在同一个 [0,3] 惩罚区间，不再
+    因机数增加而额外惩罚。这是尺度归一，不是改奖励语义。
     """
     R = float(env.T.sum())
-    lam = float((env.u > 1.0).sum())
+    n = max(len(env.u), 1)
+    lam = 3.0 * float((env.u > 1.0).sum()) / float(n)
     return R / (2.0 ** lam)
 
 
@@ -277,16 +286,16 @@ def train(mode: str, tau: float, seed: int,
         # 早停同 PPO 判据（结构直承）：近20轮均值曲线连续两窗改善 <0.5%
         ret_curve.append(float(np.mean(rets[-20 * ROLLOUT:])))
         # 早停：滑动判定窗 200 回合；只解除硬回合数下限，判据不变。
-        if ((ro + 1) % 25 == 0 and len(ret_curve) >= 2 * EARLY_WIN):
-            m2 = float(np.mean(ret_curve[-EARLY_WIN:]))
-            m1 = float(np.mean(ret_curve[-2 * EARLY_WIN:-EARLY_WIN]))
-            best_w = max(float(np.mean(ret_curve[i:i + EARLY_WIN]))
-                         for i in range(0, len(ret_curve) - EARLY_WIN + 1))
-            if (abs(m2 - m1) <= EARLY_THR * max(abs(m1), 1e-6)
-                    and m2 >= best_w - EARLY_THR * max(abs(best_w), 1e-6)):
-                print(f"[{task}] 早停@{ro+1}轮 窗口改善|{m2:.4f}-{m1:.4f}|"
-                      f"<{EARLY_THR:.1%} 且达历史最佳窗口 {best_w:.4f}",
-                      flush=True)
+        if ((ro + 1) % 25 == 0
+                and len(rets) >= 2 * EARLY_WIN * ROLLOUT):
+            short = float(np.mean(rets[-EARLY_SHORT * ROLLOUT:]))
+            long = float(np.mean(rets[-EARLY_WIN * ROLLOUT:]))
+            diff = short - long
+            band = EARLY_THR * max(abs(long), 1e-6)
+            if abs(diff) <= band:
+                print(f"[{task}] 早停@{ro+1}轮 近{EARLY_SHORT}轮={short:.4f} "
+                      f"近{EARLY_WIN}轮={long:.4f} 差={diff:+.4f} "
+                      f"|差|<{EARLY_THR:.1%} 无提升", flush=True)
                 torch.save({"policy": qnet.state_dict(),
                             "opt": opt.state_dict(),
                             "rollout": ro, "mode": mode, "tau": tau}, ckpt)

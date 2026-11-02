@@ -1017,7 +1017,7 @@ class UAVEnvV3:
         self._sinr, self._r, self._bsh, self._R = sinr, r, bsh, R
 
     def _aggregates(self):
-        """ρ/R_avail/u/T —— v2 语义：用**更新后**的关联计算（π 同步响应入内）。"""
+        """ρ/R_avail/u/T —— 现行语义：用**更新后**的关联计算（π 同步响应入内）。"""
         self.R_avail = (self.assoc * self._R).sum(axis=1)
         self.rho = self.assoc @ self.dem
         self.u = self.rho / np.maximum(self.R_avail, EPS_U)
@@ -1356,7 +1356,7 @@ class UAVEnvV3:
         d2 = deg * ue ** 2 - 2.0 * ue * s1 + s2
         d2 = np.maximum(d2, 0.0)                 # 数值非负
         bal = 1.0 / (1.0 + d2 / (deg + 1.0))
-        # 2026-11-02 v2（docs/06）：û>U_OVER 区从平底改线性下坡——过载越深
+        # 2026-11-02（docs/06）：û>U_OVER 区从平底改线性下坡——过载越深
         # 罚越重（有界到 LOAD_FLOOR），恢复速度由此获得学习梯度；û≤U_OVER 段不变。
         load = 1.0 - ((ue - U_STAR) / SIGMA) ** 2
         load = np.where(ue > U_OVER,

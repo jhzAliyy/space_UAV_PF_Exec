@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""PF-Exec v2（残差架构）：势场指向均衡点（动作主体），执行器网络给出
+"""PF-Exec（残差架构）：势场指向均衡点（动作主体），执行器网络给出
 复杂场景的有界修正项 Δ。
 
 动作 = clip(a_field + Δ, ACT_LOW, ACT_HIGH)，Δ = RES_FRAC·ACT_SCALE ⊙ tanh(logit)。
@@ -588,7 +588,7 @@ def train(args: Args) -> Path:
 
 def parse_args() -> Args:
     d = Args()
-    ap = argparse.ArgumentParser(description="PF-Exec v2 残差训练")
+    ap = argparse.ArgumentParser(description="PF-Exec 残差训练")
     ap.add_argument("--scene", default=d.scene)
     ap.add_argument("--n-uav", type=int, default=d.n_uav)
     ap.add_argument("--seed", type=int, default=d.seed)
