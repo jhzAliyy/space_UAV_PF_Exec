@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+/artifacts/
+/code/ckpt/
+/results/
+*.so
+*.dll
+/ref/
+/ext/
+/ops/
+/paper_work/
+/env_data/
+/deps/
