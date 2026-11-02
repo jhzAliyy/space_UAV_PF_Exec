@@ -9,13 +9,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { tag: flow_n30_pfrl,  scene: flow,   n: 30, mode: pfrl, dxy: 0.5, preset: "" }
-          - { tag: burst_n30_pfrl, scene: burst,  n: 30, mode: pfrl, dxy: 0.5, preset: "" }
-          - { tag: flow_n60_pfrl,  scene: flow,   n: 60, mode: pfrl, dxy: 0.5, preset: "" }
-          - { tag: burst_n60_pfrl, scene: burst,  n: 60, mode: pfrl, dxy: 0.5, preset: "" }
-          - { tag: native_pfrl_cheng7, scene: static, n: 7, mode: pfrl, dxy: 2.0, preset: cheng7 }
-          - { tag: native_pfrl_shen3,  scene: static, n: 3, mode: pfrl, dxy: 5.0, preset: shen3 }
-          - { tag: native_pfrl_jiang5, scene: static, n: 5, mode: pfrl, dxy: 0.5, preset: jiang5 }
           - { tag: native_pfrl_rizvi3, scene: static, n: 3, mode: pfrl, dxy: 0.5, preset: rizvi3 }
     timeout-minutes: 355
     steps:
