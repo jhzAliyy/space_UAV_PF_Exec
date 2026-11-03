@@ -1,0 +1,68 @@
+name: train-scale
+on: workflow_dispatch
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      max-parallel: 20
+      fail-fast: false
+      matrix:
+        include:
+          # 5 档规模表新档（用户指令 2026-11-03）：n3 新增 + n60 补齐。
+          # n12/n30/n100(flow) 已终裁；burst n100=死亡区；n200 封存背景收集。
+          # umi 通道与 n12/n30/n100 主线同口径；1200 轮满训。
+          # n3 实测 1200 轮 ~5 分钟，n60 预计 1-2h，全格 6h 内。
+          - { scene: flow,  n: 3,  seed: 0 }
+          - { scene: flow,  n: 3,  seed: 1 }
+          - { scene: flow,  n: 3,  seed: 2 }
+          - { scene: burst, n: 3,  seed: 0 }
+          - { scene: burst, n: 3,  seed: 1 }
+          - { scene: burst, n: 3,  seed: 2 }
+          - { scene: flow,  n: 60, seed: 0 }
+          - { scene: flow,  n: 60, seed: 1 }
+          - { scene: flow,  n: 60, seed: 2 }
+          - { scene: burst, n: 60, seed: 0 }
+          - { scene: burst, n: 60, seed: 1 }
+          - { scene: burst, n: 60, seed: 2 }
+          # burst n100 learned 满训补公平对照（875 轮早停版 s2 全灭疑欠训放大）
+          - { scene: burst, n: 100, seed: 0, task: burst_n100_learnedfull_tau5_s0_umi_srand }
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+      PF_TORCH_THREADS: "1"
+      PF_SHADOW_DB: random
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: deps
+        run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      - name: real code overlay
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
+          tar xzf code_real.tar.gz
+      - name: build native libs
+        run: |
+          cd code
+          g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include crowd_sfm.cpp -o crowd_sfm.so
+          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+      - name: train
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code
+          TASK_ARG=""
+          if [ -n "${{ matrix.task }}" ]; then TASK_ARG="--task ${{ matrix.task }}"; fi
+          timeout 320m env PF_EXECUTOR=fparam PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=0 \
+            python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} \
+            --seed ${{ matrix.seed }} --total-rollouts 1200 $TASK_ARG
+          echo "train_exit=$?"
+      - name: upload ckpt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ckpt-scale-${{ matrix.scene }}-n${{ matrix.n }}-s${{ matrix.seed }}
+          path: code/ckpt/
+          retention-days: 3
+          if-no-files-found: warn
