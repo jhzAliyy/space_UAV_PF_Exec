@@ -51,19 +51,17 @@ jobs:
           g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include crowd_sfm.cpp -o crowd_sfm.so
           gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
       # n200 教训：EARLY_THR=0.005 在大场景震荡曲线上 553 轮谷底误停 → 欠训 +70% over。
-      # overlay config 无环境变量补丁，sed 硬改 99.0 禁早停，满训 1200。
-      # grep 无匹配即步骤失败，sed 未命中当场暴露。
-      - name: disable early stop
-        run: |
-          sed -i 's/^EARLY_THR = .*/EARLY_THR = 99.0/' code/config.py
-          grep -n '^EARLY_THR' code/config.py
+      # release 的 code_real.tar.gz 已含 PF_EARLY_THR 环境变量门控（config.py:40），
+      # 训练 env 直接设 PF_EARLY_THR=99 满训 1200。
+      - name: verify early-stop gate
+        run: grep -n 'PF_EARLY_THR' code/config.py
       - name: train
         run: |
           export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
           cd code
           TASK_ARG=""
           if [ -n "${{ matrix.task }}" ]; then TASK_ARG="--task ${{ matrix.task }}"; fi
-          timeout 320m env PF_EXECUTOR=fparam PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=0 \
+          timeout 320m env PF_EXECUTOR=fparam PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=0 PF_EARLY_THR=99 \
             python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} \
             --seed ${{ matrix.seed }} --total-rollouts 1200 $TASK_ARG
           echo "train_exit=$?"
