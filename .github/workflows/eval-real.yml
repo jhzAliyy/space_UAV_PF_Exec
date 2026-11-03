@@ -12,6 +12,16 @@ jobs:
           - { list: eval_pure.txt,      real: 0 }
           - { list: eval_pure_real.txt, real: 1 }
           - { list: eval_tuned_real.txt, real: 1 }
+          # P1 oracle 信息差（2026-11-03 猜想一裁决）：tuned/field 执行器，
+          # PF_ORACLE=1 时 Lloyd 质心读真值用户位置。seed 1/2 复现（seed 0 在 CNB 5l9）。
+          - { list: oracle_n100_on_s1.txt,  real: 0, oracle: 1, chan: umi }
+          - { list: oracle_n100_off_s1.txt, real: 0, oracle: 0, chan: umi }
+          - { list: oracle_n200_on_s1.txt,  real: 0, oracle: 1, chan: uma }
+          - { list: oracle_n200_off_s1.txt, real: 0, oracle: 0, chan: uma }
+          - { list: oracle_n100_on_s2.txt,  real: 0, oracle: 1, chan: umi }
+          - { list: oracle_n100_off_s2.txt, real: 0, oracle: 0, chan: umi }
+          - { list: oracle_n200_on_s2.txt,  real: 0, oracle: 1, chan: uma }
+          - { list: oracle_n200_off_s2.txt, real: 0, oracle: 0, chan: uma }
     env:
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
@@ -38,7 +48,7 @@ jobs:
         run: |
           export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
           cd code
-          PF_CHANNEL=umi PF_REAL_OBS=${{ matrix.real }} python -W ignore evaluate.py ../artifacts/lists/${{ matrix.list }} ../out_$(basename ${{ matrix.list }} .txt).csv
+          PF_CHANNEL=${{ matrix.chan || 'umi' }} PF_REAL_OBS=${{ matrix.real }} PF_ORACLE=${{ matrix.oracle || '0' }} python -W ignore evaluate.py ../artifacts/lists/${{ matrix.list }} ../out_$(basename ${{ matrix.list }} .txt).csv
       - name: upload
         uses: actions/upload-artifact@v4
         with:
