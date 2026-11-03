@@ -61,7 +61,9 @@ jobs:
           cd code
           TASK_ARG=""
           if [ -n "${{ matrix.task }}" ]; then TASK_ARG="--task ${{ matrix.task }}"; fi
-          timeout 320m env PF_EXECUTOR=fparam PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=0 PF_EARLY_THR=99 \
+          # 臂口径：不带 PF_EXECUTOR → net_executor、ckpt 名段=learned（主线）；
+          # 带 fparam 会切成 a2a 臂（trainer.py EXEC_SEG，已归档路线）。
+          timeout 320m env PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=0 PF_EARLY_THR=99 \
             python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} \
             --seed ${{ matrix.seed }} --total-rollouts 1200 $TASK_ARG
           echo "train_exit=$?"
