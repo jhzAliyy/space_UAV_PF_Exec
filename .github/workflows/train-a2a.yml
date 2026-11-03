@@ -11,6 +11,7 @@ jobs:
         include:
           # a2a n30 种子重训：qs7 seed0 训练失败（早停@750 ret 0.20），
           # 判定是否种子个体。flow+burst × seed1/2 四格。
+          # timeout 320m 包装：6h job 顶被杀前 python 先退出，upload 仍执行。
           - { scene: flow,  n: 30, seed: 1 }
           - { scene: flow,  n: 30, seed: 2 }
           - { scene: burst, n: 30, seed: 1 }
@@ -40,12 +41,15 @@ jobs:
         run: |
           export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
           cd code
-          PF_EXECUTOR=fparam PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=0 \
+          timeout 320m env PF_EXECUTOR=fparam PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=0 \
             python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} \
             --seed ${{ matrix.seed }} --total-rollouts 1200
+          echo "train_exit=$?"
       - name: upload ckpt
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ckpt-a2a-${{ matrix.scene }}-n${{ matrix.n }}-s${{ matrix.seed }}
           path: code/ckpt/
           retention-days: 3
+          if-no-files-found: warn
