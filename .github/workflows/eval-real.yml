@@ -60,5 +60,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: eval-${{ matrix.list }}
-          path: code/../out_*.csv
+          path: out_*.csv
           retention-days: 3
