@@ -1,0 +1,53 @@
+name: eval-scan
+on: workflow_dispatch
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      max-parallel: 20
+      fail-fast: false
+      matrix:
+        scan: [lb85_rl10_gp50, lb85_rl15_gp50, lb85_rl20_gp50, lb85_rl30_gp50,
+               lb100_rl10_gp50, lb100_rl15_gp50, lb100_rl20_gp50, lb100_rl30_gp50,
+               lb85_rl10_gp100, lb85_rl15_gp100, lb85_rl20_gp100, lb85_rl30_gp100,
+               lb100_rl10_gp100, lb100_rl15_gp100, lb100_rl20_gp100, lb100_rl30_gp100]
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+      PF_TORCH_THREADS: "1"
+      PF_SHADOW_DB: random
+      PF_DXY_MAX: "0.5"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: deps
+        run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      - name: real code overlay
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
+          tar xzf code_real.tar.gz
+      - name: scan ckpts (bias-only 常数网络，零训练)
+        run: cd code && python make_scan_ckpts.py ../artifacts/experiments
+      - name: channel tables (n100，仓库只带 n12/n30 表)
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_100_uma_2ghz.npz -O env_data/channel/chan_100_uma_2ghz.npz
+      - name: build native libs
+        run: |
+          cd code
+          g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include crowd_sfm.cpp -o crowd_sfm.so
+          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+      - name: eval
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code
+          echo "a2a 5 0 burst 1 0 main 100 scan_${{ matrix.scan }}" > /tmp/scan_line.txt
+          PF_CHANNEL=umi PF_REAL_OBS=0 PF_ORACLE=0 python -W ignore evaluate.py /tmp/scan_line.txt ../out_scan_${{ matrix.scan }}.csv
+      - name: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-${{ matrix.scan }}
+          path: out_scan_*.csv
+          retention-days: 3
