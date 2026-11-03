@@ -13,12 +13,13 @@ jobs:
           # 首批 n3 六格挂原 run；n60/burst100 因缺 chan 表崩（run 41624017267）。
           # 表落 checkout 根 env_data/channel/（uav_env.py BASE=code/../），
           # repo 自带 4 小表不够 n60/n100，须从 release real-code 补 wget。
-          - { scene: flow,  n: 60, seed: 0 }
-          - { scene: flow,  n: 60, seed: 1 }
-          - { scene: flow,  n: 60, seed: 2 }
-          - { scene: burst, n: 60, seed: 0 }
-          - { scene: burst, n: 60, seed: 1 }
-          - { scene: burst, n: 60, seed: 2 }
+          # 全格显式 --task：消灭默认拼名歧义（overlay 默认名带 a2a 前缀）
+          - { scene: flow,  n: 60, seed: 0, task: flow_n60_learned_tau5_s0_umi_srand }
+          - { scene: flow,  n: 60, seed: 1, task: flow_n60_learned_tau5_s1_umi_srand }
+          - { scene: flow,  n: 60, seed: 2, task: flow_n60_learned_tau5_s2_umi_srand }
+          - { scene: burst, n: 60, seed: 0, task: burst_n60_learned_tau5_s0_umi_srand }
+          - { scene: burst, n: 60, seed: 1, task: burst_n60_learned_tau5_s1_umi_srand }
+          - { scene: burst, n: 60, seed: 2, task: burst_n60_learned_tau5_s2_umi_srand }
           # burst n100 learned 满训补公平对照（875 轮早停版 s2 全灭疑欠训放大）
           - { scene: burst, n: 100, seed: 0, task: burst_n100_learnedfull_tau5_s0_umi_srand }
     env:
@@ -49,6 +50,13 @@ jobs:
           cd code
           g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include crowd_sfm.cpp -o crowd_sfm.so
           gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+      # n200 教训：EARLY_THR=0.005 在大场景震荡曲线上 553 轮谷底误停 → 欠训 +70% over。
+      # overlay config 无环境变量补丁，sed 硬改 99.0 禁早停，满训 1200。
+      # grep 无匹配即步骤失败，sed 未命中当场暴露。
+      - name: disable early stop
+        run: |
+          sed -i 's/^EARLY_THR = .*/EARLY_THR = 99.0/' code/config.py
+          grep -n '^EARLY_THR' code/config.py
       - name: train
         run: |
           export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
