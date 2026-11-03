@@ -52,7 +52,7 @@ jobs:
           gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
       # n200 教训：EARLY_THR=0.005 在大场景震荡曲线上 553 轮谷底误停 → 欠训 +70% over。
       # release 的 code_real.tar.gz 已含 PF_EARLY_THR 环境变量门控（config.py:40），
-      # 训练 env 直接设 PF_EARLY_THR=99 满训 1200。
+      # 训练 env 直接设 PF_EARLY_THR=0 满训 1200。
       - name: verify early-stop gate
         run: grep -n 'PF_EARLY_THR' code/config.py
       - name: train
@@ -63,7 +63,7 @@ jobs:
           if [ -n "${{ matrix.task }}" ]; then TASK_ARG="--task ${{ matrix.task }}"; fi
           # 臂口径：不带 PF_EXECUTOR → net_executor、ckpt 名段=learned（主线）；
           # 带 fparam 会切成 a2a 臂（trainer.py EXEC_SEG，已归档路线）。
-          timeout 320m env PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=0 PF_EARLY_THR=99 \
+          timeout 320m env PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=0 PF_EARLY_THR=0 \
             python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} \
             --seed ${{ matrix.seed }} --total-rollouts 1200 $TASK_ARG
           echo "train_exit=$?"
