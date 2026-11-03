@@ -9,16 +9,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 5 档规模表新档（用户指令 2026-11-03）：n3 新增 + n60 补齐。
-          # n12/n30/n100(flow) 已终裁；burst n100=死亡区；n200 封存背景收集。
-          # umi 通道与 n12/n30/n100 主线同口径；1200 轮满训。
-          # n3 实测 1200 轮 ~5 分钟，n60 预计 1-2h，全格 6h 内。
-          - { scene: flow,  n: 3,  seed: 0 }
-          - { scene: flow,  n: 3,  seed: 1 }
-          - { scene: flow,  n: 3,  seed: 2 }
-          - { scene: burst, n: 3,  seed: 0 }
-          - { scene: burst, n: 3,  seed: 1 }
-          - { scene: burst, n: 3,  seed: 2 }
+          # 第二批（run 41624017267 重触发）：n60×6 + burst n100 满训补格。
+          # 首批 n3 六格挂原 run；n60/burst100 因缺 chan 表崩（run 41624017267）。
+          # 表落 checkout 根 env_data/channel/（uav_env.py BASE=code/../），
+          # repo 自带 4 小表不够 n60/n100，须从 release real-code 补 wget。
           - { scene: flow,  n: 60, seed: 0 }
           - { scene: flow,  n: 60, seed: 1 }
           - { scene: flow,  n: 60, seed: 2 }
@@ -43,6 +37,13 @@ jobs:
         run: |
           wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
           tar xzf code_real.tar.gz
+      - name: channel tables
+        run: |
+          wget -q -O env_data/channel/chan_60_uma_2ghz.npz https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_60_uma_2ghz.npz
+          if [ "${{ matrix.n }}" = "100" ]; then
+            wget -q -O env_data/channel/chan_100_uma_2ghz.npz https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_100_uma_2ghz.npz
+          fi
+          ls -la env_data/channel/
       - name: build native libs
         run: |
           cd code
