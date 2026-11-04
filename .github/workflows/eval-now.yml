@@ -9,23 +9,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ===== 第一波 19 条（2026-11-05）：真实线免训对照 16 + 客场三格 =====
-          - { algo: field, scene: flow,  n: 12,  real: 1, dxy: "0.5", tag: field-flow-n12 }
-          - { algo: field, scene: burst, n: 12,  real: 1, dxy: "0.5", tag: field-burst-n12 }
-          - { algo: field, scene: flow,  n: 30,  real: 1, dxy: "0.5", tag: field-flow-n30 }
-          - { algo: field, scene: burst, n: 30,  real: 1, dxy: "0.5", tag: field-burst-n30 }
-          - { algo: field, scene: flow,  n: 60,  real: 1, dxy: "0.5", tag: field-flow-n60 }
-          - { algo: field, scene: burst, n: 60,  real: 1, dxy: "0.5", tag: field-burst-n60 }
-          - { algo: field, scene: flow,  n: 100, real: 1, dxy: "0.5", tag: field-flow-n100 }
-          - { algo: field, scene: burst, n: 100, real: 1, dxy: "0.5", tag: field-burst-n100 }
-          - { algo: tuned, scene: flow,  n: 12,  real: 1, dxy: "0.5", tag: tuned-flow-n12 }
-          - { algo: tuned, scene: burst, n: 12,  real: 1, dxy: "0.5", tag: tuned-burst-n12 }
-          - { algo: tuned, scene: flow,  n: 30,  real: 1, dxy: "0.5", tag: tuned-flow-n30 }
-          - { algo: tuned, scene: burst, n: 30,  real: 1, dxy: "0.5", tag: tuned-burst-n30 }
-          - { algo: tuned, scene: flow,  n: 60,  real: 1, dxy: "0.5", tag: tuned-flow-n60 }
-          - { algo: tuned, scene: burst, n: 60,  real: 1, dxy: "0.5", tag: tuned-burst-n60 }
-          - { algo: tuned, scene: flow,  n: 100, real: 1, dxy: "0.5", tag: tuned-flow-n100 }
-          - { algo: tuned, scene: burst, n: 100, real: 1, dxy: "0.5", tag: tuned-burst-n100 }
+          # 修复批：仅重派失败的客场三格（权重落位已修：归档优先路径含 ckpt/ 层）
           - { algo: learned, scene: static, n: 7, real: 0, dxy: "2.0", preset: cheng7, task: native_learned_cheng7, tag: native-cheng7 }
           - { algo: learned, scene: static, n: 5, real: 0, dxy: "0.5", preset: jiang5, task: native_learned_jiang5, tag: native-jiang5 }
           - { algo: learned, scene: static, n: 3, real: 0, dxy: "5.0", preset: shen3,  task: native_learned_shen3,  tag: native-shen3 }
