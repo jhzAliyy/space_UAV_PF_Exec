@@ -9,8 +9,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { scene: flow,  n: 100, real: 1 }
-          - { scene: burst, n: 100, real: 1 }
+          # 2026-11-05 补训批：learned real n100 ×2（先测速后满训）。
+          - { scene: flow,  n: 100, real: 1, task: flow_n100_learned_real_tau5_s0_umi_srand }
+          - { scene: burst, n: 100, real: 1, task: burst_n100_learned_real_tau5_s0_umi_srand }
     env:
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
@@ -37,20 +38,26 @@ jobs:
           cd code
           g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include crowd_sfm.cpp -o crowd_sfm.so
           gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
-      - name: train 1200
+      - name: speed gate (30 rollouts must fit 6h)
         run: |
           export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
           cd code
-          if [ -n "${{ matrix.preset }}" ]; then
-            PF_CHANNEL=umi PF_DXY_MAX=${{ matrix.dxy }} \
-              python -W ignore run.py --algo learned --preset ${{ matrix.preset }} --task ${{ matrix.task }} --total-rollouts 1200
-          else
-            PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=${{ matrix.real }} \
-              python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} --total-rollouts 1200
-          fi
+          S=$(date +%s)
+          PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=1 PF_EARLY_THR=0 \
+            python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} --total-rollouts 30 2>&1 | tail -1
+          E=$(date +%s); PER=$(( (E-S) ))
+          echo "30轮 ${PER}s；外推1200轮 $(( PER * 40 / 60 ))min"
+          if [ $(( PER * 40 )) -gt 20000 ]; then echo "超6h预算，退出"; exit 1; fi
+      - name: train 1200 (满训，PF_EARLY_THR=0)
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code
+          PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=1 PF_EARLY_THR=0 \
+            python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} \
+            --task ${{ matrix.task }} --total-rollouts 1200
       - name: upload ckpt
         uses: actions/upload-artifact@v4
         with:
-          name: ckpt-${{ matrix.preset || format('{0}-n{1}-r{2}', matrix.scene, matrix.n, matrix.real) }}
+          name: ckpt-${{ matrix.task }}
           path: code/ckpt/
           retention-days: 3
