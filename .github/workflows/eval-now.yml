@@ -1,0 +1,81 @@
+name: eval-now
+on: workflow_dispatch
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      max-parallel: 20
+      fail-fast: false
+      matrix:
+        include:
+          # ===== 第一波 19 条（2026-11-05）：真实线免训对照 16 + 客场三格 =====
+          - { algo: field, scene: flow,  n: 12,  real: 1, dxy: "0.5", tag: field-flow-n12 }
+          - { algo: field, scene: burst, n: 12,  real: 1, dxy: "0.5", tag: field-burst-n12 }
+          - { algo: field, scene: flow,  n: 30,  real: 1, dxy: "0.5", tag: field-flow-n30 }
+          - { algo: field, scene: burst, n: 30,  real: 1, dxy: "0.5", tag: field-burst-n30 }
+          - { algo: field, scene: flow,  n: 60,  real: 1, dxy: "0.5", tag: field-flow-n60 }
+          - { algo: field, scene: burst, n: 60,  real: 1, dxy: "0.5", tag: field-burst-n60 }
+          - { algo: field, scene: flow,  n: 100, real: 1, dxy: "0.5", tag: field-flow-n100 }
+          - { algo: field, scene: burst, n: 100, real: 1, dxy: "0.5", tag: field-burst-n100 }
+          - { algo: tuned, scene: flow,  n: 12,  real: 1, dxy: "0.5", tag: tuned-flow-n12 }
+          - { algo: tuned, scene: burst, n: 12,  real: 1, dxy: "0.5", tag: tuned-burst-n12 }
+          - { algo: tuned, scene: flow,  n: 30,  real: 1, dxy: "0.5", tag: tuned-flow-n30 }
+          - { algo: tuned, scene: burst, n: 30,  real: 1, dxy: "0.5", tag: tuned-burst-n30 }
+          - { algo: tuned, scene: flow,  n: 60,  real: 1, dxy: "0.5", tag: tuned-flow-n60 }
+          - { algo: tuned, scene: burst, n: 60,  real: 1, dxy: "0.5", tag: tuned-burst-n60 }
+          - { algo: tuned, scene: flow,  n: 100, real: 1, dxy: "0.5", tag: tuned-flow-n100 }
+          - { algo: tuned, scene: burst, n: 100, real: 1, dxy: "0.5", tag: tuned-burst-n100 }
+          - { algo: learned, scene: static, n: 7, real: 0, dxy: "2.0", preset: cheng7, task: native_learned_cheng7, tag: native-cheng7 }
+          - { algo: learned, scene: static, n: 5, real: 0, dxy: "0.5", preset: jiang5, task: native_learned_jiang5, tag: native-jiang5 }
+          - { algo: learned, scene: static, n: 3, real: 0, dxy: "5.0", preset: shen3,  task: native_learned_shen3,  tag: native-shen3 }
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+      PF_TORCH_THREADS: "1"
+      PF_SHADOW_DB: random
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: deps
+        run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      - name: real code overlay
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
+          tar xzf code_real.tar.gz
+      - name: channel tables (n60/n100 仓库不带)
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_60_uma_2ghz.npz -O env_data/channel/chan_60_uma_2ghz.npz
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_100_uma_2ghz.npz -O env_data/channel/chan_100_uma_2ghz.npz
+      - name: native ckpts (learned 客场三条)
+        if: matrix.preset != ''
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/native_ckpts.tar.gz
+          tar xzf native_ckpts.tar.gz
+          mkdir -p code/ckpt/${{ matrix.task }}
+          cp ${{ matrix.task }}/ckpt/latest.pt code/ckpt/${{ matrix.task }}/
+      - name: build native libs
+        run: |
+          cd code
+          g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include crowd_sfm.cpp -o crowd_sfm.so
+          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+      - name: import check
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code && python -c "import uav_env; print('IMPORT_OK')"
+      - name: evaluate
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code
+          echo "${{ matrix.algo }} 5 0 ${{ matrix.scene }} 1 0.0 main ${{ matrix.n }} ${{ matrix.task }} ${{ matrix.preset }}" > /tmp/line.txt
+          cat /tmp/line.txt
+          MSYS_NO_PATHCONV=1 PF_DXY_MAX=${{ matrix.dxy }} PF_REAL_OBS=${{ matrix.real }} \
+            python -W ignore evaluate.py /tmp/line.txt out_${{ matrix.tag }}.csv
+      - name: upload csv
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-${{ matrix.tag }}
+          path: code/out_${{ matrix.tag }}.csv
+          retention-days: 7
