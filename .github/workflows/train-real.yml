@@ -9,10 +9,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 2026-11-05 补训批 B（矩阵裁剪至未训格）：learned real n3 ×2
-          # （n3 与 n12 同表，chan_12 表 repo 自带）。
-          - { mode: learned, scene: flow,  n: 3, real: 1, task: flow_n3_learned_real_tau5_s0_umi_srand }
-          - { mode: learned, scene: burst, n: 3, real: 1, task: burst_n3_learned_real_tau5_s0_umi_srand }
+          # 2026-11-05 补训批 C：Rizvi n12 ×2 走 code_real overlay（repo 主干
+          # 为旧一代代码树，缺奖励修复——首训 flow 件与旧作废件逐位一致实证；
+          # overlay 后 uav_env/config 为现行修复口径）。
+          - { mode: dqnm, scene: flow,  n: 12, real: 0, task: flow_n12_dqnm_tau5_s0_umi_srand }
+          - { mode: dqnm, scene: burst, n: 12, real: 0, task: burst_n12_dqnm_tau5_s0_umi_srand }
     env:
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
@@ -27,8 +28,7 @@ jobs:
       - name: deps
         run: |
           pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
-      - name: real code overlay (learned cells)
-        if: matrix.mode == 'learned'
+      - name: real code overlay (all modes)
         run: |
           wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
           tar xzf code_real.tar.gz
