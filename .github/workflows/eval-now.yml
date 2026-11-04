@@ -9,57 +9,5 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 第四波：Rizvi n12 ×2（真件 net 结构）+ 真实线 n100 flow（权重包 real_ckpts3.tar.gz）
-          - { algo: dqnm,    scene: flow,  n: 12,  real: 0, dxy: "0.5", preset: "", task: flow_n12_dqnm_tau5_s0_umi_srand,           tag: dqnm-flow-n12 }
-          - { algo: dqnm,    scene: burst, n: 12,  real: 0, dxy: "0.5", preset: "", task: burst_n12_dqnm_tau5_s0_umi_srand,          tag: dqnm-burst-n12 }
-          - { algo: learned, scene: flow,  n: 100, real: 1, dxy: "0.5", preset: "", task: flow_n100_learned_real_tau5_s0_umi_srand, tag: real-flow-n100 }
-    env:
-      OMP_NUM_THREADS: "2"
-      MKL_NUM_THREADS: "2"
-      OPENBLAS_NUM_THREADS: "2"
-      PF_TORCH_THREADS: "1"
-      PF_SHADOW_DB: random
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
-      - name: deps
-        run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
-      - name: real code overlay
-        run: |
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
-          tar xzf code_real.tar.gz
-      - name: channel tables (n60/n100 仓库不带)
-        run: |
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_60_uma_2ghz.npz -O env_data/channel/chan_60_uma_2ghz.npz
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_100_uma_2ghz.npz -O env_data/channel/chan_100_uma_2ghz.npz
-      - name: ckpt fetch (需权重的条目；落位必须含 ckpt/ 层——评估器查找口径)
-        if: matrix.task != ''
-        run: |
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/real_ckpts3.tar.gz
-          tar xzf real_ckpts3.tar.gz
-          mkdir -p artifacts/experiments/${{ matrix.task }}/ckpt
-          cp ${{ matrix.task }}/ckpt/latest.pt artifacts/experiments/${{ matrix.task }}/ckpt/
-      - name: build native libs
-        run: |
-          cd code
-          g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include crowd_sfm.cpp -o crowd_sfm.so
-          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
-      - name: import check
-        run: |
-          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
-          cd code && python -c "import uav_env; print('IMPORT_OK')"
-      - name: evaluate
-        run: |
-          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
-          cd code
-          echo "${{ matrix.algo }} 5 0 ${{ matrix.scene }} 1 0.0 main ${{ matrix.n }} ${{ matrix.task }} ${{ matrix.preset }}" > /tmp/line.txt
-          cat /tmp/line.txt
-          MSYS_NO_PATHCONV=1 PF_DXY_MAX=${{ matrix.dxy }} PF_REAL_OBS=${{ matrix.real }} \
-            python -W ignore evaluate.py /tmp/line.txt out_${{ matrix.tag }}.csv
-      - name: upload csv
-        uses: actions/upload-artifact@v4
-        with:
-          name: eval-${{ matrix.tag }}
-          path: code/out_${{ matrix.tag }}.csv
-          retention-days: 7
+          # 第五波（最终）：真实线 n100 burst（权重包 real_ckpts4.tar.gz）
+          - { algo: learned, scene: burst, n: 100, real: 1, dxy: "0.5", preset: "", task: burst_n100_learned_real_tau5_s0_umi_srand, tag: real-burst-n100 }
