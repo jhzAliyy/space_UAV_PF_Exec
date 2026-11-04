@@ -9,10 +9,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 修复批：仅重派失败的客场三格（权重落位已修：归档优先路径含 ckpt/ 层）
-          - { algo: learned, scene: static, n: 7, real: 0, dxy: "2.0", preset: cheng7, task: native_learned_cheng7, tag: native-cheng7 }
-          - { algo: learned, scene: static, n: 5, real: 0, dxy: "0.5", preset: jiang5, task: native_learned_jiang5, tag: native-jiang5 }
-          - { algo: learned, scene: static, n: 3, real: 0, dxy: "5.0", preset: shen3,  task: native_learned_shen3,  tag: native-shen3 }
+          # 第二波：learned real 六格（n3/n12/n30 × flow/burst）+ Rizvi n12 两格
+          # 权重包 real_ckpts.tar.gz（2026-11-05 上传，含 8 任务 latest.pt）
+          - { algo: learned, scene: flow,  n: 3,  real: 1, dxy: "0.5", preset: "", task: flow_n3_learned_real_tau5_s0_umi_srand,  tag: real-flow-n3 }
+          - { algo: learned, scene: burst, n: 3,  real: 1, dxy: "0.5", preset: "", task: burst_n3_learned_real_tau5_s0_umi_srand, tag: real-burst-n3 }
+          - { algo: learned, scene: flow,  n: 12, real: 1, dxy: "0.5", preset: "", task: flow_learned_real_tau5_s0_umi_srand,     tag: real-flow-n12 }
+          - { algo: learned, scene: burst, n: 12, real: 1, dxy: "0.5", preset: "", task: burst_learned_real_tau5_s0_umi_srand,    tag: real-burst-n12 }
+          - { algo: learned, scene: flow,  n: 30, real: 1, dxy: "0.5", preset: "", task: flow_n30_learned_real_tau5_s0_umi_srand,  tag: real-flow-n30 }
+          - { algo: learned, scene: burst, n: 30, real: 1, dxy: "0.5", preset: "", task: burst_n30_learned_real_tau5_s0_umi_srand, tag: real-burst-n30 }
+          - { algo: dqnm,    scene: flow,  n: 12, real: 0, dxy: "0.5", preset: "", task: flow_n12_dqnm_tau5_s0_umi_srand,          tag: dqnm-flow-n12 }
+          - { algo: dqnm,    scene: burst, n: 12, real: 0, dxy: "0.5", preset: "", task: burst_n12_dqnm_tau5_s0_umi_srand,         tag: dqnm-burst-n12 }
     env:
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
@@ -33,11 +39,11 @@ jobs:
         run: |
           wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_60_uma_2ghz.npz -O env_data/channel/chan_60_uma_2ghz.npz
           wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_100_uma_2ghz.npz -O env_data/channel/chan_100_uma_2ghz.npz
-      - name: native ckpts (learned 客场三条)
-        if: matrix.preset != ''
+      - name: ckpt fetch (需权重的条目；落位必须含 ckpt/ 层——评估器查找口径)
+        if: matrix.task != ''
         run: |
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/native_ckpts.tar.gz
-          tar xzf native_ckpts.tar.gz
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/real_ckpts.tar.gz
+          tar xzf real_ckpts.tar.gz
           mkdir -p artifacts/experiments/${{ matrix.task }}/ckpt
           cp ${{ matrix.task }}/ckpt/latest.pt artifacts/experiments/${{ matrix.task }}/ckpt/
       - name: build native libs
