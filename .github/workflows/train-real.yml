@@ -47,7 +47,7 @@ jobs:
           cd code
           S=$(date +%s)
           PF_CHANNEL=umi PF_REAL_OBS=${{ matrix.real }} PF_EARLY_THR=0 \
-            python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} --total-rollouts 30 2>&1 | tail -1
+            python -W ignore dqnm.py --mode dqnm --tau 5 --seed 0 --scene ${{ matrix.scene }} --n-uav ${{ matrix.n }} --total-rollouts 30 --fresh --task ${{ matrix.task }} 2>&1 | tail -1
           E=$(date +%s); PER=$(( (E-S) ))
           echo "30轮 ${PER}s；外推1200轮 $(( PER * 40 / 60 ))min"
           if [ $(( PER * 40 )) -gt 20000 ]; then echo "超6h预算，退出"; exit 1; fi
@@ -56,8 +56,8 @@ jobs:
           export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
           cd code
           PF_CHANNEL=umi PF_REAL_OBS=${{ matrix.real }} PF_EARLY_THR=0 \
-            python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} \
-            --task ${{ matrix.task }} --total-rollouts 1200
+            python -W ignore dqnm.py --mode dqnm --tau 5 --seed 0 --scene ${{ matrix.scene }} --n-uav ${{ matrix.n }} \
+            --task ${{ matrix.task }} --total-rollouts 1200 --fresh
       - name: upload ckpt
         uses: actions/upload-artifact@v4
         with:
