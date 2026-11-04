@@ -9,10 +9,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 第三波：真实线 n60 ×2 + 客场 rizvi3（权重包 real_ckpts2.tar.gz）
-          - { algo: learned, scene: flow,  n: 60, real: 1, dxy: "0.5", preset: "",     task: flow_n60_learned_real_tau5_s0_umi_srand,  tag: real-flow-n60 }
-          - { algo: learned, scene: burst, n: 60, real: 1, dxy: "0.5", preset: "",     task: burst_n60_learned_real_tau5_s0_umi_srand, tag: real-burst-n60 }
-          - { algo: learned, scene: static, n: 3, real: 0, dxy: "0.5", preset: rizvi3, task: native_learned_rizvi3,                   tag: native-rizvi3 }
+          # 第四波：Rizvi n12 ×2（真件 net 结构）+ 真实线 n100 flow（权重包 real_ckpts3.tar.gz）
+          - { algo: dqnm,    scene: flow,  n: 12,  real: 0, dxy: "0.5", preset: "", task: flow_n12_dqnm_tau5_s0_umi_srand,           tag: dqnm-flow-n12 }
+          - { algo: dqnm,    scene: burst, n: 12,  real: 0, dxy: "0.5", preset: "", task: burst_n12_dqnm_tau5_s0_umi_srand,          tag: dqnm-burst-n12 }
+          - { algo: learned, scene: flow,  n: 100, real: 1, dxy: "0.5", preset: "", task: flow_n100_learned_real_tau5_s0_umi_srand, tag: real-flow-n100 }
     env:
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
@@ -36,8 +36,8 @@ jobs:
       - name: ckpt fetch (需权重的条目；落位必须含 ckpt/ 层——评估器查找口径)
         if: matrix.task != ''
         run: |
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/real_ckpts2.tar.gz
-          tar xzf real_ckpts2.tar.gz
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/real_ckpts3.tar.gz
+          tar xzf real_ckpts3.tar.gz
           mkdir -p artifacts/experiments/${{ matrix.task }}/ckpt
           cp ${{ matrix.task }}/ckpt/latest.pt artifacts/experiments/${{ matrix.task }}/ckpt/
       - name: build native libs
