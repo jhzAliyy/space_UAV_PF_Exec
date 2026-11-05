@@ -1,0 +1,182 @@
+name: train-seedfill
+on: workflow_dispatch
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      max-parallel: 20
+      fail-fast: false
+      matrix:
+        include:
+          - { kind: learned, scene: "flow", n: 12, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_learned_tau5_s1_umi_srand }
+          - { kind: learned, scene: "flow", n: 12, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_learned_tau5_s2_umi_srand }
+          - { kind: learned, scene: "flow", n: 30, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n30_learned_tau5_s1_umi_srand }
+          - { kind: learned, scene: "flow", n: 30, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n30_learned_tau5_s2_umi_srand }
+          - { kind: learned, scene: "flow", n: 100, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n100_learned_tau5_s1_umi_srand }
+          - { kind: learned, scene: "flow", n: 100, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n100_learned_tau5_s2_umi_srand }
+          - { kind: learned, scene: "burst", n: 12, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_learned_tau5_s1_umi_srand }
+          - { kind: learned, scene: "burst", n: 12, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_learned_tau5_s2_umi_srand }
+          - { kind: learned, scene: "burst", n: 30, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n30_learned_tau5_s1_umi_srand }
+          - { kind: learned, scene: "burst", n: 30, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n30_learned_tau5_s2_umi_srand }
+          - { kind: learned, scene: "burst", n: 100, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n100_learned_tau5_s1_umi_srand }
+          - { kind: learned, scene: "flow", n: 3, seed: 1, real: 1, preset: "", extra: "", dxy: "0.5", task: flow_n3_learned_real_tau5_s1_umi_srand }
+          - { kind: learned, scene: "flow", n: 3, seed: 2, real: 1, preset: "", extra: "", dxy: "0.5", task: flow_n3_learned_real_tau5_s2_umi_srand }
+          - { kind: learned, scene: "flow", n: 12, seed: 1, real: 1, preset: "", extra: "", dxy: "0.5", task: flow_learned_real_tau5_s1_umi_srand }
+          - { kind: learned, scene: "flow", n: 12, seed: 2, real: 1, preset: "", extra: "", dxy: "0.5", task: flow_learned_real_tau5_s2_umi_srand }
+          - { kind: learned, scene: "flow", n: 30, seed: 1, real: 1, preset: "", extra: "", dxy: "0.5", task: flow_n30_learned_real_tau5_s1_umi_srand }
+          - { kind: learned, scene: "flow", n: 30, seed: 2, real: 1, preset: "", extra: "", dxy: "0.5", task: flow_n30_learned_real_tau5_s2_umi_srand }
+          - { kind: learned, scene: "flow", n: 60, seed: 1, real: 1, preset: "", extra: "", dxy: "0.5", task: flow_n60_learned_real_tau5_s1_umi_srand }
+          - { kind: learned, scene: "flow", n: 60, seed: 2, real: 1, preset: "", extra: "", dxy: "0.5", task: flow_n60_learned_real_tau5_s2_umi_srand }
+          - { kind: learned, scene: "flow", n: 100, seed: 1, real: 1, preset: "", extra: "", dxy: "0.5", task: flow_n100_learned_real_tau5_s1_umi_srand }
+          - { kind: learned, scene: "flow", n: 100, seed: 2, real: 1, preset: "", extra: "", dxy: "0.5", task: flow_n100_learned_real_tau5_s2_umi_srand }
+          - { kind: learned, scene: "burst", n: 3, seed: 1, real: 1, preset: "", extra: "", dxy: "0.5", task: burst_n3_learned_real_tau5_s1_umi_srand }
+          - { kind: learned, scene: "burst", n: 3, seed: 2, real: 1, preset: "", extra: "", dxy: "0.5", task: burst_n3_learned_real_tau5_s2_umi_srand }
+          - { kind: learned, scene: "burst", n: 12, seed: 1, real: 1, preset: "", extra: "", dxy: "0.5", task: burst_learned_real_tau5_s1_umi_srand }
+          - { kind: learned, scene: "burst", n: 12, seed: 2, real: 1, preset: "", extra: "", dxy: "0.5", task: burst_learned_real_tau5_s2_umi_srand }
+          - { kind: learned, scene: "burst", n: 30, seed: 1, real: 1, preset: "", extra: "", dxy: "0.5", task: burst_n30_learned_real_tau5_s1_umi_srand }
+          - { kind: learned, scene: "burst", n: 30, seed: 2, real: 1, preset: "", extra: "", dxy: "0.5", task: burst_n30_learned_real_tau5_s2_umi_srand }
+          - { kind: learned, scene: "burst", n: 60, seed: 1, real: 1, preset: "", extra: "", dxy: "0.5", task: burst_n60_learned_real_tau5_s1_umi_srand }
+          - { kind: learned, scene: "burst", n: 60, seed: 2, real: 1, preset: "", extra: "", dxy: "0.5", task: burst_n60_learned_real_tau5_s2_umi_srand }
+          - { kind: learned, scene: "burst", n: 100, seed: 1, real: 1, preset: "", extra: "", dxy: "0.5", task: burst_n100_learned_real_tau5_s1_umi_srand }
+          - { kind: learned, scene: "burst", n: 100, seed: 2, real: 1, preset: "", extra: "", dxy: "0.5", task: burst_n100_learned_real_tau5_s2_umi_srand }
+          - { kind: ddpga, scene: "flow", n: 12, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_ddpga_tau5_s1_umi_srand }
+          - { kind: ddpga, scene: "flow", n: 12, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_ddpga_tau5_s2_umi_srand }
+          - { kind: ddpga, scene: "flow", n: 30, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n30_ddpga_tau5_s1_umi_srand }
+          - { kind: ddpga, scene: "flow", n: 30, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n30_ddpga_tau5_s2_umi_srand }
+          - { kind: ddpga, scene: "flow", n: 60, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n60_ddpga_tau5_s1_umi_srand }
+          - { kind: ddpga, scene: "flow", n: 60, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n60_ddpga_tau5_s2_umi_srand }
+          - { kind: ddpga, scene: "flow", n: 100, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n100_ddpga_tau5_s1_umi_srand }
+          - { kind: ddpga, scene: "flow", n: 100, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n100_ddpga_tau5_s2_umi_srand }
+          - { kind: ddpga, scene: "burst", n: 12, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_ddpga_tau5_s1_umi_srand }
+          - { kind: ddpga, scene: "burst", n: 12, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_ddpga_tau5_s2_umi_srand }
+          - { kind: ddpga, scene: "burst", n: 30, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n30_ddpga_tau5_s1_umi_srand }
+          - { kind: ddpga, scene: "burst", n: 30, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n30_ddpga_tau5_s2_umi_srand }
+          - { kind: ddpga, scene: "burst", n: 60, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n60_ddpga_tau5_s1_umi_srand }
+          - { kind: ddpga, scene: "burst", n: 60, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n60_ddpga_tau5_s2_umi_srand }
+          - { kind: ddpga, scene: "burst", n: 100, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n100_ddpga_tau5_s1_umi_srand }
+          - { kind: ddpga, scene: "burst", n: 100, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n100_ddpga_tau5_s2_umi_srand }
+          - { kind: dqnm, scene: "flow", n: 12, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n12_dqnm_tau5_s1_umi_srand }
+          - { kind: dqnm, scene: "flow", n: 12, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n12_dqnm_tau5_s2_umi_srand }
+          - { kind: dqnm, scene: "flow", n: 30, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n30_dqnm_tau5_s1_umi_srand }
+          - { kind: dqnm, scene: "flow", n: 30, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n30_dqnm_tau5_s2_umi_srand }
+          - { kind: dqnm, scene: "flow", n: 60, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n60_dqnm_tau5_s1_umi_srand }
+          - { kind: dqnm, scene: "flow", n: 60, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n60_dqnm_tau5_s2_umi_srand }
+          - { kind: dqnm, scene: "flow", n: 100, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n100_dqnm_tau5_s1_umi_srand }
+          - { kind: dqnm, scene: "flow", n: 100, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: flow_n100_dqnm_tau5_s2_umi_srand }
+          - { kind: dqnm, scene: "burst", n: 12, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n12_dqnm_tau5_s1_umi_srand }
+          - { kind: dqnm, scene: "burst", n: 12, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n12_dqnm_tau5_s2_umi_srand }
+          - { kind: dqnm, scene: "burst", n: 30, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n30_dqnm_tau5_s1_umi_srand }
+          - { kind: dqnm, scene: "burst", n: 30, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n30_dqnm_tau5_s2_umi_srand }
+          - { kind: dqnm, scene: "burst", n: 60, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n60_dqnm_tau5_s1_umi_srand }
+          - { kind: dqnm, scene: "burst", n: 60, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n60_dqnm_tau5_s2_umi_srand }
+          - { kind: dqnm, scene: "burst", n: 100, seed: 1, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n100_dqnm_tau5_s1_umi_srand }
+          - { kind: dqnm, scene: "burst", n: 100, seed: 2, real: 0, preset: "", extra: "", dxy: "0.5", task: burst_n100_dqnm_tau5_s2_umi_srand }
+          - { kind: learned, scene: "", n: 0, seed: 1, real: 0, preset: "cheng7", extra: "", dxy: "2.0", task: native_learned_cheng7_s1 }
+          - { kind: learned, scene: "", n: 0, seed: 2, real: 0, preset: "cheng7", extra: "", dxy: "2.0", task: native_learned_cheng7_s2 }
+          - { kind: learned, scene: "", n: 0, seed: 1, real: 0, preset: "rizvi3", extra: "", dxy: "0.5", task: native_learned_rizvi3_s1 }
+          - { kind: learned, scene: "", n: 0, seed: 2, real: 0, preset: "rizvi3", extra: "", dxy: "0.5", task: native_learned_rizvi3_s2 }
+          - { kind: learned, scene: "", n: 0, seed: 1, real: 0, preset: "shen3", extra: "", dxy: "5.0", task: native_learned_shen3_s1 }
+          - { kind: learned, scene: "", n: 0, seed: 2, real: 0, preset: "shen3", extra: "", dxy: "5.0", task: native_learned_shen3_s2 }
+          - { kind: learned, scene: "", n: 0, seed: 1, real: 0, preset: "jiang5", extra: "", dxy: "0.5", task: native_learned_jiang5_s1 }
+          - { kind: learned, scene: "", n: 0, seed: 2, real: 0, preset: "jiang5", extra: "", dxy: "0.5", task: native_learned_jiang5_s2 }
+          - { kind: ddpga, scene: "static", n: 7, seed: 1, real: 0, preset: "cheng7", extra: "--preset cheng7", dxy: "2.0", task: native_ddpga_cheng7_s1 }
+          - { kind: ddpga, scene: "static", n: 7, seed: 2, real: 0, preset: "cheng7", extra: "--preset cheng7", dxy: "2.0", task: native_ddpga_cheng7_s2 }
+          - { kind: dqnm, scene: "static", n: 3, seed: 1, real: 0, preset: "rizvi3", extra: "--preset rizvi3", dxy: "0.5", task: native_dqnm_rizvi3_s1 }
+          - { kind: dqnm, scene: "static", n: 3, seed: 2, real: 0, preset: "rizvi3", extra: "--preset rizvi3", dxy: "0.5", task: native_dqnm_rizvi3_s2 }
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+      PF_TORCH_THREADS: "1"
+      PF_SHADOW_DB: random
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: deps
+        run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      - name: real code overlay
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
+          tar xzf code_real.tar.gz
+      - name: channel tables (n60/n100)
+        if: matrix.n >= 60
+        run: |
+          cd env_data/channel
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_60_uma_2ghz.npz
+          if [ "${{ matrix.n }}" -ge 100 ]; then
+            wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_100_uma_2ghz.npz
+          fi
+          ls -la
+      - name: build native libs
+        run: |
+          cd code
+          g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include crowd_sfm.cpp -o crowd_sfm.so
+          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+      - name: import check
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code && python -c "import uav_env; print('IMPORT_OK')"
+      - name: speed gate (30 rollouts must fit 6h)
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code
+          echo "GATE_START task=${{ matrix.task }} kind=${{ matrix.kind }} scene=${{ matrix.scene }} n=${{ matrix.n }} seed=${{ matrix.seed }} real=${{ matrix.real }} preset=${{ matrix.preset }}"
+          S=$(date +%s)
+          set -o pipefail
+          if [ "${{ matrix.kind }}" = "learned" ]; then
+            if [ -n "${{ matrix.preset }}" ]; then
+              PF_CHANNEL=umi PF_DXY_MAX=${{ matrix.dxy }} PF_REAL_OBS=${{ matrix.real }} PF_EARLY_THR=0 \
+                python -W ignore run.py --algo learned --preset ${{ matrix.preset }} --seed ${{ matrix.seed }} \
+                --task speedgate_${{ matrix.task }} --total-rollouts 30 2>&1 | tail -3
+            else
+              PF_CHANNEL=umi PF_DXY_MAX=${{ matrix.dxy }} PF_REAL_OBS=${{ matrix.real }} PF_EARLY_THR=0 \
+                python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} --seed ${{ matrix.seed }} \
+                --task speedgate_${{ matrix.task }} --total-rollouts 30 2>&1 | tail -3
+            fi
+          else
+            if [ -n "${{ matrix.preset }}" ]; then ETHR=""; else ETHR="PF_EARLY_THR=0"; fi
+            env PF_CHANNEL=umi PF_DXY_MAX=${{ matrix.dxy }} PF_REAL_OBS=0 $ETHR \
+              python -W ignore ${{ matrix.kind }}.py --mode ${{ matrix.kind }} --tau 5 --seed ${{ matrix.seed }} \
+              --scene ${{ matrix.scene }} --n-uav ${{ matrix.n }} --total-rollouts 30 --fresh \
+              --task speedgate_${{ matrix.task }} ${{ matrix.extra }} 2>&1 | tail -3
+          fi
+          RC=${PIPESTATUS[0]}
+          E=$(date +%s); PER=$(( (E-S) ))
+          echo "GATE_30R=${PER}s extrapolate_1200=$(( PER * 40 / 60 ))min rc=$RC"
+          if [ $RC -ne 0 ]; then echo "GATE_RUN_FAILED rc=$RC"; exit 1; fi
+          if [ $(( PER * 40 )) -gt 20000 ]; then echo "GATE_OVER_BUDGET 超6h预算，退出"; exit 1; fi
+          rm -rf ckpt/speedgate_${{ matrix.task }}
+          echo "GATE_OK"
+      - name: train 1200
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code
+          echo "TRAIN_START task=${{ matrix.task }} kind=${{ matrix.kind }} n=${{ matrix.n }} seed=${{ matrix.seed }}"
+          if [ "${{ matrix.kind }}" = "learned" ]; then
+            if [ -n "${{ matrix.preset }}" ]; then
+              timeout 340m env PF_CHANNEL=umi PF_DXY_MAX=${{ matrix.dxy }} PF_REAL_OBS=${{ matrix.real }} PF_EARLY_THR=0 \
+                python -W ignore run.py --algo learned --preset ${{ matrix.preset }} --seed ${{ matrix.seed }} \
+                --task ${{ matrix.task }} --total-rollouts 1200
+            else
+              timeout 340m env PF_CHANNEL=umi PF_DXY_MAX=${{ matrix.dxy }} PF_REAL_OBS=${{ matrix.real }} PF_EARLY_THR=0 \
+                python -W ignore run.py --algo learned --scene ${{ matrix.scene }} --n ${{ matrix.n }} --seed ${{ matrix.seed }} \
+                --task ${{ matrix.task }} --total-rollouts 1200
+            fi
+          else
+            if [ -n "${{ matrix.preset }}" ]; then ETHR=""; else ETHR="PF_EARLY_THR=0"; fi
+            timeout 340m env PF_CHANNEL=umi PF_DXY_MAX=${{ matrix.dxy }} PF_REAL_OBS=0 $ETHR \
+              python -W ignore ${{ matrix.kind }}.py --mode ${{ matrix.kind }} --tau 5 --seed ${{ matrix.seed }} \
+              --scene ${{ matrix.scene }} --n-uav ${{ matrix.n }} --total-rollouts 1200 --fresh \
+              --task ${{ matrix.task }} ${{ matrix.extra }}
+          fi
+          echo "TRAIN_DONE task=${{ matrix.task }}"
+      - name: upload ckpt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ckpt-${{ matrix.task }}
+          path: code/ckpt/
+          retention-days: 5
+          if-no-files-found: warn
