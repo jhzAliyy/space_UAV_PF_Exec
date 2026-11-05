@@ -1,0 +1,53 @@
+name: eval-one-rizvi3
+on: workflow_dispatch
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+      PF_TORCH_THREADS: "1"
+      PF_SHADOW_DB: random
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: deps
+        run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      - name: real code overlay
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
+          tar xzf code_real.tar.gz
+      - name: fetch ckpt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/jhzAliyy/space4-run/actions/artifacts/13450976877/zip" -o a.zip
+          unzip -q a.zip -d unpacked
+          mkdir -p artifacts/experiments/native_learned_rizvi3_s1/ckpt
+          find unpacked -name latest.pt -exec cp {} artifacts/experiments/native_learned_rizvi3_s1/ckpt/ \;
+          ls -la artifacts/experiments/native_learned_rizvi3_s1/ckpt/
+      - name: build native libs
+        run: |
+          cd code
+          g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include crowd_sfm.cpp -o crowd_sfm.so
+          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+      - name: eval three tiers
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          mkdir -p artifacts/lists
+          echo "learned 5 1 static 1 0.0 main 3 native_learned_rizvi3_s1 rizvi3" > artifacts/lists/_rizvi3.txt
+          cat artifacts/lists/_rizvi3.txt
+          cd code
+          PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=0 \
+            python -W ignore evaluate.py ../artifacts/lists/_rizvi3.txt ../out_native_learned_rizvi3_s1.csv
+      - name: upload csv
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evalcsv-native_learned_rizvi3_s1
+          path: out_native_learned_rizvi3_s1.csv
+          retention-days: 7
