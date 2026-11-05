@@ -1,0 +1,166 @@
+name: eval-seedfill
+on: workflow_dispatch
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      PF_EARLY_THR: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: deps
+        run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      - name: real code overlay
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
+          tar xzf code_real.tar.gz
+      - name: build native libs
+        run: |
+          cd code
+          g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include crowd_sfm.cpp -o crowd_sfm.so
+          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+      - name: train native_learned_rizvi3_s1
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          cd code
+          PF_DXY_MAX=0.5 timeout 340m python -W ignore run.py --algo learned \
+            --scene static --n 3 --preset rizvi3 --seed 1 \
+            --total-rollouts 1200 --fresh --task native_learned_rizvi3_s1
+      - name: upload ckpt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ckpt-native_learned_rizvi3_s1
+          path: code/ckpt/native_learned_rizvi3_s1/**
+          retention-days: 7
+
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      max-parallel: 20
+      fail-fast: false
+      matrix:
+        include:
+          - { task: 'burst_ddpga_tau5_s1_umi_srand', aid: '13402331621', algo: 'ddpga', scene: 'burst', n: '12', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_ddpga_tau5_s2_umi_srand', aid: '13403602010', algo: 'ddpga', scene: 'burst', n: '12', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_learned_real_tau5_s1_umi_srand', aid: '13398864062', algo: 'learned', scene: 'burst', n: '12', seed: '1', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'burst_learned_real_tau5_s2_umi_srand', aid: '13398744603', algo: 'learned', scene: 'burst', n: '12', seed: '2', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'burst_learned_tau5_s1_umi_srand', aid: '13397626840', algo: 'learned', scene: 'burst', n: '12', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_learned_tau5_s2_umi_srand', aid: '13395835810', algo: 'learned', scene: 'burst', n: '12', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n100_ddpga_tau5_s1_umi_srand', aid: '13412606825', algo: 'ddpga', scene: 'burst', n: '100', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n100_ddpga_tau5_s2_umi_srand', aid: '13417516513', algo: 'ddpga', scene: 'burst', n: '100', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n100_dqnm_tau5_s1_umi_srand', aid: '13416708180', algo: 'dqnm', scene: 'burst', n: '100', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n100_dqnm_tau5_s2_umi_srand', aid: '13414638579', algo: 'dqnm', scene: 'burst', n: '100', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n100_learned_real_tau5_s1_umi_srand', aid: '13410864959', algo: 'learned', scene: 'burst', n: '100', seed: '1', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'burst_n100_learned_real_tau5_s2_umi_srand', aid: '13405099077', algo: 'learned', scene: 'burst', n: '100', seed: '2', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'burst_n100_learned_tau5_s1_umi_srand', aid: '13402792202', algo: 'learned', scene: 'burst', n: '100', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n12_dqnm_tau5_s1_umi_srand', aid: '13406302520', algo: 'dqnm', scene: 'burst', n: '12', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n12_dqnm_tau5_s2_umi_srand', aid: '13406723593', algo: 'dqnm', scene: 'burst', n: '12', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n30_ddpga_tau5_s1_umi_srand', aid: '13404020614', algo: 'ddpga', scene: 'burst', n: '30', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n30_ddpga_tau5_s2_umi_srand', aid: '13404631956', algo: 'ddpga', scene: 'burst', n: '30', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n30_dqnm_tau5_s1_umi_srand', aid: '13407002427', algo: 'dqnm', scene: 'burst', n: '30', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n30_dqnm_tau5_s2_umi_srand', aid: '13408554478', algo: 'dqnm', scene: 'burst', n: '30', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n30_learned_real_tau5_s1_umi_srand', aid: '13400014567', algo: 'learned', scene: 'burst', n: '30', seed: '1', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'burst_n30_learned_real_tau5_s2_umi_srand', aid: '13402439528', algo: 'learned', scene: 'burst', n: '30', seed: '2', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'burst_n30_learned_tau5_s1_umi_srand', aid: '13397119694', algo: 'learned', scene: 'burst', n: '30', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n30_learned_tau5_s2_umi_srand', aid: '13397749176', algo: 'learned', scene: 'burst', n: '30', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n3_learned_real_tau5_s1_umi_srand', aid: '13396278508', algo: 'learned', scene: 'burst', n: '3', seed: '1', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'burst_n3_learned_real_tau5_s2_umi_srand', aid: '13397609068', algo: 'learned', scene: 'burst', n: '3', seed: '2', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'burst_n60_ddpga_tau5_s1_umi_srand', aid: '13409757952', algo: 'ddpga', scene: 'burst', n: '60', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n60_ddpga_tau5_s2_umi_srand', aid: '13409298720', algo: 'ddpga', scene: 'burst', n: '60', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n60_dqnm_tau5_s1_umi_srand', aid: '13411420629', algo: 'dqnm', scene: 'burst', n: '60', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n60_dqnm_tau5_s2_umi_srand', aid: '13411438350', algo: 'dqnm', scene: 'burst', n: '60', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'burst_n60_learned_real_tau5_s1_umi_srand', aid: '13405649150', algo: 'learned', scene: 'burst', n: '60', seed: '1', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'burst_n60_learned_real_tau5_s2_umi_srand', aid: '13404242432', algo: 'learned', scene: 'burst', n: '60', seed: '2', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'flow_ddpga_tau5_s1_umi_srand', aid: '13400771377', algo: 'ddpga', scene: 'flow', n: '12', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_ddpga_tau5_s2_umi_srand', aid: '13399888013', algo: 'ddpga', scene: 'flow', n: '12', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_learned_real_tau5_s1_umi_srand', aid: '13395444946', algo: 'learned', scene: 'flow', n: '12', seed: '1', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'flow_learned_real_tau5_s2_umi_srand', aid: '13396172722', algo: 'learned', scene: 'flow', n: '12', seed: '2', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'flow_learned_tau5_s1_umi_srand', aid: '13395740790', algo: 'learned', scene: 'flow', n: '12', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_learned_tau5_s2_umi_srand', aid: '13395187318', algo: 'learned', scene: 'flow', n: '12', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n100_ddpga_tau5_s1_umi_srand', aid: '13412628243', algo: 'ddpga', scene: 'flow', n: '100', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n100_ddpga_tau5_s2_umi_srand', aid: '13409634173', algo: 'ddpga', scene: 'flow', n: '100', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n100_dqnm_tau5_s1_umi_srand', aid: '13414555419', algo: 'dqnm', scene: 'flow', n: '100', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n100_dqnm_tau5_s2_umi_srand', aid: '13409864005', algo: 'dqnm', scene: 'flow', n: '100', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n100_learned_real_tau5_s1_umi_srand', aid: '13400577001', algo: 'learned', scene: 'flow', n: '100', seed: '1', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'flow_n100_learned_real_tau5_s2_umi_srand', aid: '13402019104', algo: 'learned', scene: 'flow', n: '100', seed: '2', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'flow_n100_learned_tau5_s1_umi_srand', aid: '13399822215', algo: 'learned', scene: 'flow', n: '100', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n100_learned_tau5_s2_umi_srand', aid: '13405452729', algo: 'learned', scene: 'flow', n: '100', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n12_dqnm_tau5_s1_umi_srand', aid: '13404429405', algo: 'dqnm', scene: 'flow', n: '12', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n12_dqnm_tau5_s2_umi_srand', aid: '13404822991', algo: 'dqnm', scene: 'flow', n: '12', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n30_ddpga_tau5_s1_umi_srand', aid: '13401095474', algo: 'ddpga', scene: 'flow', n: '30', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n30_ddpga_tau5_s2_umi_srand', aid: '13403132125', algo: 'ddpga', scene: 'flow', n: '30', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n30_dqnm_tau5_s1_umi_srand', aid: '13405187297', algo: 'dqnm', scene: 'flow', n: '30', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n30_dqnm_tau5_s2_umi_srand', aid: '13406576090', algo: 'dqnm', scene: 'flow', n: '30', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n30_learned_real_tau5_s1_umi_srand', aid: '13396470625', algo: 'learned', scene: 'flow', n: '30', seed: '1', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'flow_n30_learned_real_tau5_s2_umi_srand', aid: '13399720258', algo: 'learned', scene: 'flow', n: '30', seed: '2', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'flow_n30_learned_tau5_s1_umi_srand', aid: '13395363562', algo: 'learned', scene: 'flow', n: '30', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n30_learned_tau5_s2_umi_srand', aid: '13398547076', algo: 'learned', scene: 'flow', n: '30', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n3_learned_real_tau5_s1_umi_srand', aid: '13397184452', algo: 'learned', scene: 'flow', n: '3', seed: '1', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'flow_n3_learned_real_tau5_s2_umi_srand', aid: '13396849050', algo: 'learned', scene: 'flow', n: '3', seed: '2', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'flow_n60_ddpga_tau5_s1_umi_srand', aid: '13403680718', algo: 'ddpga', scene: 'flow', n: '60', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n60_ddpga_tau5_s2_umi_srand', aid: '13406950806', algo: 'ddpga', scene: 'flow', n: '60', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n60_dqnm_tau5_s1_umi_srand', aid: '13408182025', algo: 'dqnm', scene: 'flow', n: '60', seed: '1', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n60_dqnm_tau5_s2_umi_srand', aid: '13409360414', algo: 'dqnm', scene: 'flow', n: '60', seed: '2', real: '0', preset: '', dxy: '0.5' }
+          - { task: 'flow_n60_learned_real_tau5_s1_umi_srand', aid: '13397681412', algo: 'learned', scene: 'flow', n: '60', seed: '1', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'flow_n60_learned_real_tau5_s2_umi_srand', aid: '13397377863', algo: 'learned', scene: 'flow', n: '60', seed: '2', real: '1', preset: '', dxy: '0.5' }
+          - { task: 'native_ddpga_cheng7_s1', aid: '13410507407', algo: 'ddpga', scene: 'static', n: '7', seed: '1', real: '0', preset: 'cheng7', dxy: '2.0' }
+          - { task: 'native_ddpga_cheng7_s2', aid: '13410399716', algo: 'ddpga', scene: 'static', n: '7', seed: '2', real: '0', preset: 'cheng7', dxy: '2.0' }
+          - { task: 'native_dqnm_rizvi3_s1', aid: '13410262635', algo: 'dqnm', scene: 'static', n: '3', seed: '1', real: '0', preset: 'rizvi3', dxy: '0.5' }
+          - { task: 'native_dqnm_rizvi3_s2', aid: '13410722577', algo: 'dqnm', scene: 'static', n: '3', seed: '2', real: '0', preset: 'rizvi3', dxy: '0.5' }
+          - { task: 'native_learned_cheng7_s1', aid: '13408864401', algo: 'learned', scene: 'static', n: '7', seed: '1', real: '0', preset: 'cheng7', dxy: '2.0' }
+          - { task: 'native_learned_cheng7_s2', aid: '13407719273', algo: 'learned', scene: 'static', n: '7', seed: '2', real: '0', preset: 'cheng7', dxy: '2.0' }
+          - { task: 'native_learned_jiang5_s1', aid: '13412767657', algo: 'learned', scene: 'static', n: '5', seed: '1', real: '0', preset: 'jiang5', dxy: '0.5' }
+          - { task: 'native_learned_jiang5_s2', aid: '13412696986', algo: 'learned', scene: 'static', n: '5', seed: '2', real: '0', preset: 'jiang5', dxy: '0.5' }
+          - { task: 'native_learned_rizvi3_s2', aid: '13408697835', algo: 'learned', scene: 'static', n: '3', seed: '2', real: '0', preset: 'rizvi3', dxy: '0.5' }
+          - { task: 'native_learned_shen3_s1', aid: '13410233241', algo: 'learned', scene: 'static', n: '3', seed: '1', real: '0', preset: 'shen3', dxy: '5.0' }
+          - { task: 'native_learned_shen3_s2', aid: '13412340172', algo: 'learned', scene: 'static', n: '3', seed: '2', real: '0', preset: 'shen3', dxy: '5.0' }
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+      PF_TORCH_THREADS: "1"
+      PF_SHADOW_DB: random
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: deps
+        run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      - name: real code overlay
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
+          tar xzf code_real.tar.gz
+      - name: fetch ckpt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/jhzAliyy/space4-run/actions/artifacts/${{ matrix.aid }}/zip" -o a.zip
+          unzip -q a.zip -d unpacked
+          mkdir -p artifacts/experiments/${{ matrix.task }}/ckpt
+          cp unpacked/${{ matrix.task }}/* artifacts/experiments/${{ matrix.task }}/ckpt/
+          ls artifacts/experiments/${{ matrix.task }}/ckpt/
+      - name: build native libs
+        run: |
+          cd code
+          g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include crowd_sfm.cpp -o crowd_sfm.so
+          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+      - name: eval
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          mkdir -p artifacts/lists
+          echo "${{ matrix.algo }} 5 ${{ matrix.seed }} ${{ matrix.scene }} 1 0.0 umi ${{ matrix.n }} ${{ matrix.task }} ${{ matrix.preset }}" > artifacts/lists/_one.txt
+          cd code
+          if [ "${{ matrix.real }}" = "1" ]; then export PF_REAL_OBS=1; fi
+          PF_CHANNEL=umi PF_DXY_MAX=${{ matrix.dxy }} python -W ignore evaluate.py ../artifacts/lists/_one.txt ../out_${{ matrix.task }}.csv
+      - name: upload csv
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evalcsv-${{ matrix.task }}
+          path: out_*.csv
+          retention-days: 7
