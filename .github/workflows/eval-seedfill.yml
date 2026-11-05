@@ -25,15 +25,32 @@ jobs:
         run: |
           export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
           cd code
-          PF_DXY_MAX=0.5 timeout 340m python -W ignore run.py --algo learned \
-            --scene static --n 3 --preset rizvi3 --seed 1 \
-            --total-rollouts 1200 --fresh --task native_learned_rizvi3_s1
+          timeout 340m env PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=0 PF_EARLY_THR=0 \
+            python -W ignore run.py --algo learned --preset rizvi3 --seed 1 \
+            --task native_learned_rizvi3_s1 --total-rollouts 1200
+          echo "TRAIN_DONE task=native_learned_rizvi3_s1"
       - name: upload ckpt
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ckpt-native_learned_rizvi3_s1
-          path: code/ckpt/native_learned_rizvi3_s1/**
+          path: code/ckpt/
+          retention-days: 7
+      - name: eval native_learned_rizvi3_s1
+        run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
+          mkdir -p artifacts/lists
+          echo "learned 5 1 static 1 0.0 main 3 native_learned_rizvi3_s1 rizvi3" > artifacts/lists/_rizvi3.txt
+          cat artifacts/lists/_rizvi3.txt
+          cd code
+          PF_CHANNEL=umi PF_DXY_MAX=0.5 PF_REAL_OBS=0 \
+            python -W ignore evaluate.py ../artifacts/lists/_rizvi3.txt ../out_native_learned_rizvi3_s1.csv
+      - name: upload csv
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evalcsv-native_learned_rizvi3_s1
+          path: out_native_learned_rizvi3_s1.csv
           retention-days: 7
 
   eval:
@@ -134,6 +151,10 @@ jobs:
         run: |
           wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
           tar xzf code_real.tar.gz
+      - name: channel tables (n60/n100 仓库不带)
+        run: |
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_60_uma_2ghz.npz -O env_data/channel/chan_60_uma_2ghz.npz
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_100_uma_2ghz.npz -O env_data/channel/chan_100_uma_2ghz.npz
       - name: fetch ckpt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -142,8 +163,8 @@ jobs:
             "https://api.github.com/repos/jhzAliyy/space4-run/actions/artifacts/${{ matrix.aid }}/zip" -o a.zip
           unzip -q a.zip -d unpacked
           mkdir -p artifacts/experiments/${{ matrix.task }}/ckpt
-          cp unpacked/${{ matrix.task }}/* artifacts/experiments/${{ matrix.task }}/ckpt/
-          ls artifacts/experiments/${{ matrix.task }}/ckpt/
+          find unpacked -name latest.pt -exec cp {} artifacts/experiments/${{ matrix.task }}/ckpt/ \;
+          ls -la artifacts/experiments/${{ matrix.task }}/ckpt/
       - name: build native libs
         run: |
           cd code
@@ -153,7 +174,8 @@ jobs:
         run: |
           export PYTHONPATH=$GITHUB_WORKSPACE/deps/MuJoCo-drones-gym:$PYTHONPATH
           mkdir -p artifacts/lists
-          echo "${{ matrix.algo }} 5 ${{ matrix.seed }} ${{ matrix.scene }} 1 0.0 umi ${{ matrix.n }} ${{ matrix.task }} ${{ matrix.preset }}" > artifacts/lists/_one.txt
+          echo "${{ matrix.algo }} 5 ${{ matrix.seed }} ${{ matrix.scene }} 1 0.0 main ${{ matrix.n }} ${{ matrix.task }} ${{ matrix.preset }}" > artifacts/lists/_one.txt
+          cat artifacts/lists/_one.txt
           cd code
           if [ "${{ matrix.real }}" = "1" ]; then export PF_REAL_OBS=1; fi
           PF_CHANNEL=umi PF_DXY_MAX=${{ matrix.dxy }} python -W ignore evaluate.py ../artifacts/lists/_one.txt ../out_${{ matrix.task }}.csv
