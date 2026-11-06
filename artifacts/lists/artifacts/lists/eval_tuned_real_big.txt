@@ -1,6 +1,0 @@
-tuned 5 0 flow 1 0.0 umi 60
-tuned 5 0 flow 1 0.0 umi 100
-tuned 5 0 flow 1 0.0 uma 200
-tuned 5 0 burst 1 0.0 umi 60
-tuned 5 0 burst 1 0.0 umi 100
-tuned 5 0 burst 1 0.0 uma 200

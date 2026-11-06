@@ -1,34 +1,83 @@
 # -*- coding: utf-8 -*-
-"""统一评估：读清单，跑满 2000 步，写 CSV 与逐场曲线。
+"""统一评估器：注册表驱动，与训练完全同一条链（field.reading → 执行器）。
 
-清单行格式（空格分隔）：
-    mode tau seed scene t_comm anchor chan n_uav [ckpt_task] [preset]
+列表行格式（空行与 # 注释跳过）：
+    <algo> <tau> <seed> <scene> <t_comm> <anchor> <chan> <n> [ckpt_task] [preset]
+示例：
+    field 5 0 flow 1 0 main 12
+    learned 5 0 flow 1 0 main 12 flow_n12_learned_tau5_s0
+    tuned 5 0 static 1 0 main 7 - cheng7
+    ddpga 5 0 flow 1 0 main 30 flow_n30_ddpga_tau5_s0_umi_srand
 
-mode ∈ {pfrl, pfg, rand, fixed, greedy, rr, shen, jiang, ddpga, dqnm, mfdqn, tmarl}
+algo ∈ 场族别名 field/tuned/learned（→ 执行器 max/tuned/net）｜
+        SOTA 臂 ddpga/dqnm/mfdqn/tmarl ｜ 免训基线 rand/fixed/greedy/rr/shen/jiang
+
+口径照旧：确定性执行、三档 2000/3000/4000 步、pre=[700,1000]、
+post=末 300 步、cov 含回合初值、e_fly/travel、逐场曲线 CSV。
+真实观测挡板与训练同开关（PF_REAL_OBS=1）。训练臂按 ckpt_task
+加载 latest.pt（从零唯一模式，无版本兼容分支）。
 """
 from __future__ import annotations
 
 import csv
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 import torch
 
-from uav_env import (ACT_DIM, CKPT_ROOT, EPISODE_LEN, N0_DBM, P_REF_DBM,
-                     RESULT_DIR, UAVEnvV3, baseline_scene, collect_nb,
-                     decode_ddp, norm_obs, select81)
-from field import GlobalField
-from heuristics import make_baseline
-from pfrl import ResidualActor, ExecCtrl
+from uav_env import CKPT_ROOT, RESULT_DIR, collect_nb, decode_ddp, norm_obs, \
+    select81
 
-CHAN_MAP = {"main": (None, None), "uma35": (None, 3.5e9),
-            "rma2": ("rma", None), "rma35": ("rma", 3.5e9)}
-COV_DB = 5.0
+# ckpt 读取根（顺序查找）：归档格（experiments/<task>/ckpt，纪律位置）
+# 优先，训练暂存区（code/ckpt）兜底（在训/未归档件）。
+EVAL_CKPT_ROOTS = (CKPT_ROOT.parent.parent / "artifacts" / "experiments",
+                   CKPT_ROOT)
+
+
+def _task_dir(task: str) -> Path:
+    for root in EVAL_CKPT_ROOTS:
+        d = root / task / "ckpt"
+        if (d / "latest.pt").exists():
+            return d
+    return EVAL_CKPT_ROOTS[0] / task / "ckpt"   # 不存在也返回（报缺件路径）
+from field import Field
+from executors import EXECUTORS
+from executors.net_executor import Net
+from trainer import RealObsGate
+from heuristics import make_baseline
+
+EVAL_STEPS = (2000, 3000, 4000)
+COV_DB = 5.0                       # 覆盖判定门限（SINR ≥ 5 dB，照旧）
+
+# 场族别名 → 执行器注册键
+FIELD_ALIAS = {"field": "max", "tuned": "tuned", "learned": "net",
+               "a2a": "fparam"}
+BASELINES = ("rand", "fixed", "greedy", "rr", "shen", "jiang")
+SOTA_ARMS = ("ddpga", "dqnm", "mfdqn", "tmarl")
+
+FIELDS = ["var_u_pre", "var_u_post", "u_mean_pre", "u_mean_post",
+          "sum_t_pre", "sum_t_post", "n_over_pre", "n_over_post",
+          "var_u_clip_pre", "var_u_clip_post", "n_dead_pre", "n_dead_post",
+          "cov_pre", "cov_post", "algo", "tau", "seed", "scene", "t_comm",
+          "anchor", "chan", "n_uav", "preset", "e_fly", "travel",
+          "ckpt_task", "steps"]
+
+
+def load_net(task: str) -> Net:
+    ck = _task_dir(task) / "latest.pt"
+    if not ck.exists():
+        raise FileNotFoundError(task)
+    sd = torch.load(ck, map_location="cpu", weights_only=False)
+    net = Net()
+    net.load_state_dict(sd["policy"])
+    net.eval()
+    return net
 
 
 def run_name(mode, tau, seed, scene, n_uav, chan):
-    import os
+    """ckpt 任务名（缺省时按旧命名约定推导）。"""
     sig = os.environ.get("PF_SHADOW_DB", "random").strip().lower()
     stag = "srand" if sig in ("random", "rand", "r") else f"s{sig}"
     parts = [scene]
@@ -43,53 +92,35 @@ def run_name(mode, tau, seed, scene, n_uav, chan):
 
 
 class Controller:
-    """评估分派：项目方法、纯势场、免训基线、四个训练臂。"""
+    """评估分派：场族执行器链、SOTA 臂、免训基线。"""
 
-    def __init__(self, mode, env, seed, ckpt_task=None):
-        self.mode = mode
+    def __init__(self, algo, env, seed, ckpt_task=None):
+        self.mode = algo
         self.rng = np.random.default_rng(seed)
         self.net = None
         self.ctrl = None
-        if mode == "pfrl":
-            tdir = CKPT_ROOT / (ckpt_task or run_name(
-                mode, 5.0, seed, env.scene, env.n_uav, "main"))
-            ck = tdir / "latest.pt"
-            if not ck.exists():
-                raise FileNotFoundError(tdir.name)
-            sd = torch.load(ck, map_location="cpu", weights_only=False)
-            # 残差口径：ckpt 必须带 res_frac；缺键 = 旧版，直接报错。
-            # b 维尺度（rizvi3 修复）：训练端落盘 env.b_scale，评估端断言
-            # 与评估环境一致后按它重建残差上界，防场景/尺度错配。
-            # 缺键 = 修复前 ckpt（在跑 9 格），其 b 维尺度恒为全局 5.0，
-            # 且这些场景 env.b_scale 也是 5.0——回退 5.0 语义精确。
-            from pfrl import act_scale_of
-            _bs = float(sd.get("b_scale", 5.0))
-            assert abs(_bs - env.b_scale) < 1e-9, (
-                f"ckpt b_scale={_bs} 与评估环境 b_scale={env.b_scale} 不一致"
-                f"（task={ckpt_task}）——场景或代码版本错配")
-            actor = ResidualActor(widths=tuple(sd["widths"]),
-                                  p=float(sd["dropout_p"]),
-                                  res_frac=float(sd["res_frac"]),
-                                  act_scale=act_scale_of(env))
-            actor.load_state_dict(sd["policy"])
-            # 臂配置从 ckpt 复原：训练用哪支场，评估就用哪支
-            field = GlobalField(mode=sd["field_mode"],
-                                map_name=(sd["map_name"] or None),
-                                u_star=sd["u_star"])
-            eta = float(sd["eta_fixed"])
-            self.ctrl = ExecCtrl(actor, field, eta_fixed=eta,
-                                 with_pos=bool(sd["with_pos"]))
-        elif mode == "pfg":
-            self.ctrl = None
-            self.field = GlobalField(mode="closed", u_star=0.8)
-        elif mode in ("rand", "fixed", "greedy", "rr", "shen", "jiang"):
-            self.ctrl = make_baseline(mode, seed)
+        if algo in FIELD_ALIAS or algo in EXECUTORS:
+            key = FIELD_ALIAS.get(algo, algo)
+            ex = EXECUTORS[key]()
+            if key in ("net", "fparam"):         # learned/a2a 臂：加载 ckpt
+                task = ckpt_task or run_name(
+                    "a2a" if key == "fparam" else "learned",
+                    5.0, seed, env.scene, env.n_uav, "main")
+                ex.net = load_net(task)
+            f = Field()
+
+            def ctrl(env, _ex=ex, _f=f):
+                rd = _f.reading(env)
+                return _ex.act(env, rd) if not _ex.needs_training \
+                    else _ex.act(env, rd, deterministic=True)
+            self.ctrl = ctrl
+        elif algo in BASELINES:
+            self.ctrl = make_baseline(algo, seed)
         else:
-            self.net = self._load_arm(mode, seed, env, ckpt_task)
+            self.net = self._load_arm(algo, seed, env, ckpt_task)
 
     def _load_arm(self, mode, seed, env, ckpt_task):
-        from ddpga import Actor as DDPActor, DDPGWrap
-        tdir = CKPT_ROOT / (ckpt_task or run_name(
+        tdir = _task_dir(ckpt_task or run_name(
             mode, 5.0, seed, env.scene, env.n_uav, "main"))
         ck = tdir / "latest.pt"
         if not ck.exists():
@@ -101,6 +132,7 @@ class Controller:
             policy.load_state_dict(sd["policy"])
             return DQNWrap(policy)
         if mode == "ddpga":
+            from ddpga import Actor as DDPActor, DDPGWrap
             policy = DDPActor.from_ckpt(sd["policy"])
             policy.load_state_dict(sd["policy"])
             return DDPGWrap(policy)
@@ -115,22 +147,18 @@ class Controller:
         return TWrap(policy)
 
     def reset(self):
-        """回合边界：把有状态的智能体（累计量、平均场、上一步动作）归零。"""
+        """回合边界：有状态的智能体（累计量、平均场）归零。"""
         for obj in (self.net, self.ctrl):
             if obj is not None and hasattr(obj, "reset"):
                 obj.reset()
 
-    def begin_step(self, env, explore_field=False):
-        pass
-
     def act(self, env, deterministic=True):
+        """统一返回三元组 (d, d_copy, aux)——旧 Controller 约定。"""
         if self.ctrl is not None:
-            return self.ctrl.act(env, deterministic)
-        if self.mode == "pfg":
-            d = self.field.act(env)
-            return d, np.zeros_like(d), np.zeros(env.n_uav)
-        if self.net is None:
-            return np.zeros((env.n_uav, ACT_DIM), np.float32), None, None
+            fn = getattr(self.ctrl, "act", None)
+            if fn is not None:                     # 对象控制器（基线）
+                return fn(env, deterministic)
+            return self.ctrl(env), None, None      # 场族闭包
         if self.mode == "dqnm":
             q = self.net.q(norm_obs(env.obs()))
             _, d = select81(q, env, 0.0, self.rng)
@@ -145,18 +173,17 @@ class Controller:
 
 
 def rollout(env, ctrl, tag, steps):
-    """确定性执行 steps 步；pre = [700,1000]，post = 末 300 步。"""
-    from pfrl import RealObsGate
+    """确定性执行 steps 步；pre=[700,1000]，post=末 300 步（含 cov 初值、
+    e_fly/travel、逐场曲线 CSV——口径照旧）。"""
     gate = RealObsGate(env, env.seed)
     env.reset()
     gate.snap = None
-    ctrl.reset()                          # 有状态智能体的回合边界
+    ctrl.reset()
     prev = env.pos.copy()
     travel = 0.0
     cov = [float(np.mean(10 * np.log10(np.maximum(
         env._sinr.max(axis=0), 1e-30)) >= COV_DB))]
     for _ in range(steps):
-        ctrl.begin_step(env, explore_field=False)
         d, _, _ = gate(lambda: ctrl.act(env, deterministic=True))
         env.step(d)                       # 超过 EPISODE_LEN 也继续跑，不重置
         travel += float(np.abs(env.pos - prev).sum())
@@ -176,44 +203,41 @@ def rollout(env, ctrl, tag, steps):
     w["cov_post"] = float(np.mean(cov[lo:hi]))
     cur_dir = RESULT_DIR / "curves" / env.scene
     cur_dir.mkdir(parents=True, exist_ok=True)
-    with open(cur_dir / f"{tag}_s{steps}.csv", "w", encoding="utf-8") as f:
-        f.write("t,u_mean,var_u,var_u_clip,n_dead,sum_t,n_over,cov\n")
+    with open(cur_dir / f"{tag}_s{steps}.csv", "w", encoding="utf-8") as fp:
+        fp.write("t,u_mean,var_u,var_u_clip,n_dead,sum_t,n_over,cov\n")
         for t, (um, vv, vc, nd, stt, no, cv) in enumerate(zip(
                 st.u_mean, st.var_u, st.var_u_clip, st.n_dead, st.sum_t,
                 st.n_over, cov)):
-            f.write(f"{t},{um:.6g},{vv:.6g},{vc:.6g},{nd},{stt:.6g},{no},{cv:.4f}\n")
+            fp.write(f"{t},{um:.6g},{vv:.6g},{vc:.6g},{nd},{stt:.6g},"
+                     f"{no},{cv:.4f}\n")
     w.update({"e_fly": float(np.sum(st.e_fly)), "travel": travel})
     return w
 
 
-EVAL_STEPS = (2000, 3000, 4000)
-
-
 def evaluate_line(parts):
-    mode, tau, seed, scene = parts[0], float(parts[1]), int(parts[2]), parts[3]
+    algo, tau, seed, scene = parts[0], float(parts[1]), int(parts[2]), parts[3]
     t_comm, anchor = int(parts[4]), float(parts[5])
-    chan, n_uav = parts[6], int(parts[7])
-    ckpt_task = parts[8] if len(parts) > 8 and parts[8] else None
-    preset = parts[9] if len(parts) > 9 and parts[9] else None
+    chan, n = parts[6], int(parts[7])
+    ckpt_task = parts[8] if len(parts) > 8 and parts[8] not in ("-", "") else None
+    preset = parts[9] if len(parts) > 9 and parts[9] not in ("-", "") else None
 
-    spec = baseline_scene(preset)
-    scen, fc = CHAN_MAP[chan]
-    env = UAVEnvV3(tau_u=tau, seed=seed, scene=scene, n_uav=n_uav,
-                   t_comm=t_comm, layout_n=max(12, n_uav),
-                   use_physics=(spec is None), override_spec=spec,
-                   scenario=scen, fc_hz=fc,
-                   p_ref_dbm=P_REF_DBM, n0_dbm=N0_DBM,
-                   demand_scale=(spec or {}).get("demand_scale", 3.7648))
-    ctrl = Controller(mode, env, seed, ckpt_task)
-    tag = ckpt_task or run_name(mode, tau, seed, scene, n_uav, chan)
+    import argparse
+    a = argparse.Namespace(
+        algo=algo, tau=tau, seed=seed, scene=scene, n=n, chan=chan,
+        preset=preset, t_comm=t_comm)
+    from channel_env import build_env
+    env = build_env(a)
+
+    ctrl = Controller(algo, env, seed, ckpt_task)
+    tag = ckpt_task or run_name(algo, tau, seed, scene, n, chan)
     if preset:
         tag = f"{tag}_{preset}"
     rows = []
     for steps in EVAL_STEPS:
         w = rollout(env, ctrl, tag, steps)
-        w.update({"mode": mode, "tau": tau, "seed": seed, "scene": scene,
+        w.update({"algo": algo, "tau": tau, "seed": seed, "scene": scene,
                   "t_comm": t_comm, "anchor": anchor, "chan": chan,
-                  "n_uav": n_uav, "preset": preset or "",
+                  "n_uav": n, "preset": preset or "",
                   "ckpt_task": ckpt_task or "", "steps": steps})
         print(f"[{tag}] steps={steps} u_mean={w['u_mean_post']:.4f} "
               f"var_u={w['var_u_post']:.3e} sum_t={w['sum_t_post']:.1f} "
@@ -221,14 +245,6 @@ def evaluate_line(parts):
         rows.append(w)
     env.close()
     return rows
-
-
-FIELDS = ["var_u_pre", "var_u_post", "u_mean_pre", "u_mean_post",
-          "sum_t_pre", "sum_t_post", "n_over_pre", "n_over_post",
-          "var_u_clip_pre", "var_u_clip_post", "n_dead_pre", "n_dead_post",
-          "cov_pre", "cov_post", "mode", "tau", "seed", "scene", "t_comm",
-          "anchor", "chan", "n_uav", "preset", "e_fly", "travel",
-          "ckpt_task", "steps"]
 
 
 def main() -> int:
@@ -244,22 +260,19 @@ def main() -> int:
             rows.extend(evaluate_line(parts))
         except FileNotFoundError as e:
             print(f"[eval] 缺 ckpt，跳过 {e}", flush=True)
-        except Exception as e:            # noqa: BLE001
-            # 单条失败不拖垮整批：大声打出类型与消息，继续下一条
+        except Exception as e:                  # noqa: BLE001
             print(f"[eval] 失败 {' '.join(parts)}: "
                   f"{type(e).__name__}: {e}", flush=True)
     if rows:
-        with open(out, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=FIELDS)
-            w.writeheader()
+        with open(out, "w", newline="", encoding="utf-8") as fp:
+            wtr = csv.DictWriter(fp, fieldnames=FIELDS)
+            wtr.writeheader()
             for r in rows:
-                w.writerow({k: r.get(k, "") for k in FIELDS})
-    if len(rows) == need:
-        print(f"[eval] 评估完成 {len(rows)} 条 → {out}", flush=True)
-        return 0
-    # 行数不足：调度器不得把本批标记为完成，缺的格按日志逐条补
-    print(f"[eval] 评估未完成 {len(rows)}/{need} 条 → {out}", flush=True)
-    return 2
+                wtr.writerow({k: r.get(k, "") for k in FIELDS})
+    ok = len(rows) == need
+    print(f"[eval] {'评估完成' if ok else '评估未完成'} "
+          f"{len(rows)}/{need} 条 → {out}", flush=True)
+    return 0 if ok else 2
 
 
 if __name__ == "__main__":

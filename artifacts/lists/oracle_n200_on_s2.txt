@@ -1,3 +1,0 @@
-tuned 5 2 burst 1 0.0 main 200 oracle_tuned_n200_burst_s2
-tuned 5 2 flow 1 0.0 main 200 oracle_tuned_n200_flow_s2
-field 5 2 burst 1 0.0 main 200 oracle_field_n200_burst_s2

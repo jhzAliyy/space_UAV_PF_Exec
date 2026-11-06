@@ -12,12 +12,10 @@ import numpy as np
 
 from config import (CKPT_EVERY, EARLY_SHORT, EARLY_THR, EARLY_WIN,
                     EPISODE_LEN, IDLE_R_EPS, IDLE_U_CAP, LOAD_FLOOR,
-                    LOAD_SLOPE, OBS_NORM, PF_RELAX,
-                    PF_U_MAP, PI_DUAL_STEP, PI_MAX, PI_MIN, R_MIN, SE_REF,
+                    LOAD_SLOPE, OBS_NORM,
+                    PF_U_MAP, PI_MAX, PI_MIN, R_MIN, SE_REF,
                     SIGMA, TOTAL_ROLLOUTS, U_OVER, U_STAR, W_BAL, W_EFF,
                     W_LOAD)
-
-U_STAR_DEFAULT = U_STAR          # 兼容旧导入名；值来自 config
 
 BASE = Path(__file__).resolve().parent.parent          # 项目根（相对锚）
 TABLE_DIR = BASE / "env_data" / "channel"               # 信道表
@@ -114,13 +112,15 @@ DP_MIN, DP_MAX = -0.1, 0.1
 # 实测该指令下 MuJoCo CF2X（27 g / 推重比 2.25）达成 3.6~4.4 m/s，
 # 与真实 Crazyflie 2.1 的巡航档一致。原值 5.0 m/步 是把它当 50 m/s 用。
 DXY_MAX = float(os.environ.get("PF_DXY_MAX", "0.5"))
+# Lloyd 质心信息口径开关：PF_ORACLE=1 时质心直接读真值用户位置（P1 实验）。
+LLOYD_ORACLE = os.environ.get("PF_ORACLE", "") == "1"
 #   环境变量可覆盖：基线论文的 UAV 速度是 20~25 m/s（Cheng TIM 2024 Vmax=20、
 #   Chen T-ITS 2024 Vmax=25），本项目默认 0.5 m/步 = 5 m/s 属保守真实值。
 #   用 PF_DXY_MAX=2.0 可复现 20 m/s 条件，专供"移动能力敏感性"对照。
-ACT_DIM = 5
-ACT_LOW = np.array([-5.0, -0.5, -0.1, -DXY_MAX, -DXY_MAX])
-ACT_HIGH = np.array([5.0, 0.5, 0.1, DXY_MAX, DXY_MAX])
-ACT_SCALE = np.array([5.0, 0.5, 0.1, DXY_MAX, DXY_MAX])
+ACT_DIM = 5                              # 动作维数（环境事实）
+STEP_LOW = np.array([-5.0, -0.5, -0.1, -DXY_MAX, -DXY_MAX])   # 物理单步极限（环境物理属性，非执行器参数）
+STEP_HIGH = np.array([5.0, 0.5, 0.1, DXY_MAX, DXY_MAX])
+STEP_MAX = np.array([5.0, 0.5, 0.1, DXY_MAX, DXY_MAX])       # 单步可执行幅度上限（方向×力度的合成空间）
 # 执行器输出维（用户裁定）：σ = [σ_b, σ_π, σ_p, σ_xy]，四个归一化速率比例。
 # 三个通信量各一个倍率，位置 x/y 共用一个。只有这一种形状。
 SIG_DIM = 4
@@ -1046,7 +1046,12 @@ class UAVEnvV3:
 
         噪声每次采样加一次（不是每步加），种子由训练种子与步号组合，可复现。
         首步之前还没有采样值时用初始位置补一次采样。
+
+        PF_ORACLE=1（2026-11-03 猜想一 P1 裁决实验）：返回真值 user_pos，
+        绕过延迟+噪声采样——量化"信息差上界"。默认关，不改任何既有口径。
         """
+        if LLOYD_ORACLE:
+            return self.user_pos
         if self._lloyd_sample is None:
             _r = np.random.default_rng(int(self.seed) * 100003 + 7)
             self._lloyd_sample = self.user_pos + _r.normal(
@@ -1533,7 +1538,7 @@ def collect_nb(obs: np.ndarray, adj: np.ndarray, k_fix: int | None = None,
     return obs[idx], mk
 
 def clip_act(d: np.ndarray) -> np.ndarray:
-    return np.clip(d, ACT_LOW[None, :], ACT_HIGH[None, :])
+    return np.clip(d, STEP_LOW[None, :], STEP_HIGH[None, :])
 
 
 K_NB_FIX = 12    # tmarl 邻居集固定宽（>物理上限 ~8：250m 半径/150m 网格；

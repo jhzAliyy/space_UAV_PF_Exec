@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+*.so
+*.dll
+*.log
+.DS_Store
+
+# 数据与实验产物（不入库）
+/env_data/
+/results/
+/artifacts/experiments/
+/artifacts/eval/
+/artifacts/eval_summary/
+/artifacts/lists/
+/artifacts/theory_audit/out/
+/code/ckpt/
+/tmp/
+/tmp_dl/
+/bin/
+/ref/
+/ext/
+/paper_work/

@@ -45,10 +45,97 @@ class PhysicsAdapter:
             physics=mode, sim_freq=SIM_FREQ, ctrl_freq=CTRL_FREQ,
             act_type=ActionType.RPM, gui=False)
         self.ctrls = [PIDControl(self.aviary) for _ in range(self.n)]
+        self._pid_reset()
         self._setpoint = self.init_xy.copy()
         self._since_update = PHYS_HOLD            # 触发首步即接受新设定点
         self.e_fly = np.zeros(self.n)             # 累计飞行能耗（记录指标）
         self.steps = 0
+
+    def _pid_reset(self) -> None:
+        """批量 PID 的逐机积分/微分状态（形状 (N,3)）。"""
+        n = self.n
+        self._int_pos = np.zeros((n, 3))
+        self._int_rpy = np.zeros((n, 3))
+        self._last_pos_e = np.zeros((n, 3))
+        self._last_rpy_e = np.zeros((n, 3))
+
+    @staticmethod
+    def _quat_to_rpy_batch(quat: np.ndarray) -> np.ndarray:
+        """四元数 [w,x,y,z] 批量转 RPY；与 PIDControl._quatToRPY 逐式一致。"""
+        w, x, y, z = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+        roll = np.arctan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+        pitch = np.arcsin(np.clip(2 * (w * y - z * x), -1.0, 1.0))
+        yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+        return np.stack([roll, pitch, yaw], axis=1)
+
+    def _batch_pid(self, target_pos: np.ndarray, dt: float) -> np.ndarray:
+        """一次算完全部 N 架机的级联 PID（与逐机 PIDControl 同式）。
+
+        2026-11-02 并行化：原 step 每拍 Python 循环 N 次（n100×4 拍=400 次），
+        现改为 (N,3) 数组一次算完，消除 Python/小数组开销；数学逐式照抄
+        PIDControl.computeControl（位置环→姿态环→电机分配），不改变控制律。
+        """
+        c = self.ctrls[0]
+        pos = self.aviary.pos
+        vel = self.aviary.vel
+        pos_e = target_pos - pos
+        self._int_pos += pos_e * dt
+        np.clip(self._int_pos, -2.0, 2.0, out=self._int_pos)
+        target_acc = (c.P_COEFF_FOR[None, :] * pos_e
+                      + c.I_COEFF_FOR[None, :] * self._int_pos
+                      + c.D_COEFF_FOR[None, :] * (-vel))
+        target_acc[:, 2] += c.GRAVITY
+        thrust = c.MASS * np.linalg.norm(target_acc, axis=1)
+        low = target_acc[:, 2] < 0.0
+        if low.any():
+            target_acc[low, 2] = 0.0
+            thrust[low] = c.MASS * np.linalg.norm(target_acc[low], axis=1)
+        norm = np.linalg.norm(target_acc, axis=1)
+        z_axis = np.empty_like(target_acc)
+        good = norm > 1e-6
+        z_axis[good] = target_acc[good] / norm[good, None]
+        z_axis[~good] = np.array([0.0, 0.0, 1.0])
+        x_c = np.array([1.0, 0.0, 0.0])
+        y_axis = np.cross(z_axis, x_c[None, :])
+        y_norm = np.linalg.norm(y_axis, axis=1)
+        ok = y_norm > 1e-6
+        y_axis[ok] /= y_norm[ok, None]
+        y_axis[~ok] = np.array([0.0, 1.0, 0.0])
+        x_axis = np.cross(y_axis, z_axis)
+        target_roll = np.arcsin(y_axis[:, 2])
+        target_pitch = np.arctan2(-x_axis[:, 2], z_axis[:, 2])
+        cur_rpy = self._quat_to_rpy_batch(self.aviary.quat)
+        rpy_e = np.stack([target_roll - cur_rpy[:, 0],
+                          target_pitch - cur_rpy[:, 1],
+                          -cur_rpy[:, 2]], axis=1)
+        rpy_e[:, 2] = (rpy_e[:, 2] + np.pi) % (2 * np.pi) - np.pi
+        self._int_rpy += rpy_e * dt
+        np.clip(self._int_rpy, -0.5, 0.5, out=self._int_rpy)
+        d_rpy = ((rpy_e - self._last_rpy_e) / dt
+                 if dt > 0 else np.zeros_like(rpy_e))
+        torques = (c.P_COEFF_TOR[None, :] * rpy_e
+                   + c.I_COEFF_TOR[None, :] * self._int_rpy
+                   + c.D_COEFF_TOR[None, :] * d_rpy)
+        self._last_pos_e = pos_e
+        self._last_rpy_e = rpy_e
+        s2 = np.sqrt(2.0)
+        km_kf = c.KM / c.KF
+        max_t_xy = c.L / s2 * c.KF * c.MAX_RPM ** 2 * 0.3
+        max_t_z = km_kf * c.KF * c.MAX_RPM ** 2 * 0.3
+        torques[:, 0] = np.clip(torques[:, 0], -max_t_xy, max_t_xy)
+        torques[:, 1] = np.clip(torques[:, 1], -max_t_xy, max_t_xy)
+        torques[:, 2] = np.clip(torques[:, 2], -max_t_z, max_t_z)
+        A = np.array([
+            [1.0, 1.0, 1.0, 1.0],
+            [c.L / s2, c.L / s2, -c.L / s2, -c.L / s2],
+            [-c.L / s2, c.L / s2, c.L / s2, -c.L / s2],
+            [-km_kf, km_kf, -km_kf, km_kf],
+        ])
+        b = np.column_stack([thrust, torques])
+        mf = np.linalg.solve(A, b.T).T
+        mf = np.clip(mf, 0.0, c.KF * c.MAX_RPM ** 2)
+        rpm = np.sqrt(mf / c.KF)
+        return np.clip(rpm, 0.0, c.MAX_RPM)
 
     # ----------------------------- 基本接口 -----------------------------
     def reset(self, init_xy: np.ndarray | None = None) -> np.ndarray:
@@ -58,6 +145,7 @@ class PhysicsAdapter:
                 [self.init_xy, np.full(self.n, self.alt)])
         self.aviary.reset()
         self.ctrls = [type(c)(self.aviary) for c in self.ctrls]  # 控制器复位
+        self._pid_reset()
         self._setpoint = self.init_xy.copy()
         self._since_update = PHYS_HOLD
         self.e_fly = np.zeros(self.n)
@@ -88,14 +176,8 @@ class PhysicsAdapter:
         self._since_update += 1
         tgt3 = np.column_stack([self._setpoint, np.full(self.n, self.alt)])
         e0 = self._energy_proxy()
-        rpms = np.zeros((self.n, 4))
         for _ in range(PHYS_SUBSTEP):
-            for i in range(self.n):                 # 外部持久 PID（正典用法）
-                rpms[i], _, _ = self.ctrls[i].computeControl(
-                    control_timestep=self.aviary.CTRL_TIMESTEP,
-                    cur_pos=self.aviary.pos[i], cur_quat=self.aviary.quat[i],
-                    cur_vel=self.aviary.vel[i], cur_ang_vel=self.aviary.ang_v[i],
-                    target_pos=tgt3[i])
+            rpms = self._batch_pid(tgt3, self.aviary.CTRL_TIMESTEP)
             self.aviary.step(rpms.flatten())
         self.e_fly += self._energy_proxy() - e0
         self.steps += 1

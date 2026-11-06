@@ -31,7 +31,7 @@ import torch
 import torch.nn as nn
 
 # torch 线程数（PF_TORCH_THREADS>0 生效）：小 MLP 多线程负优化，与 C 核
-# OpenMP（OMP_NUM_THREADS）解耦——同 pfrl.py 的改造。
+# OpenMP（OMP_NUM_THREADS）解耦——与训练管线同款解耦。
 try:
     _tt_sota = int(os.environ.get("PF_TORCH_THREADS", "0") or 0)
 except NameError:
