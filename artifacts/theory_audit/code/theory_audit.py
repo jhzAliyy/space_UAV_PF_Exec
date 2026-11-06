@@ -95,7 +95,7 @@ def assoc_step(state, a, tau=TAU):
     x = np.exp(attn - attn.max(axis=0, keepdims=True))
     x /= x.sum(axis=0, keepdims=True)
     a_new = (1.0 - 1.0 / tau) * a + (1.0 / tau) * x
-    return a_new, r, R2, R_avail, rho, u
+    return a_new, r, R2, R_avail, rho, u, x
 
 
 def pure_action(env, field):
@@ -104,8 +104,16 @@ def pure_action(env, field):
                    -rd.step[None, :], rd.step[None, :])
 
 
+def softmax_apply(p, u):
+    """逐用户 softmax Jacobian 作用：S u = p*(u - Σ_j p_j u_j)。"""
+    return p * (u - (p * u).sum(axis=0, keepdims=True))
+
+
 def d1_metrics(state):
-    """D1：b* 对 c 的数值雅可比；秩一残差与非对角能量。"""
+    """D1：b* 对 c 的 Jacobian 减去标量主项后的秩一残差。
+
+    理论式 J = (1/μ*)I - c v^T/μ*^2；秩一结构在减掉 (1/μ*)I 后显现。
+    """
     c = state.u * state.b
     bs = bstar_from_c(c, state.b_total)
     n = len(c)
@@ -115,76 +123,123 @@ def d1_metrics(state):
         c2 = c.copy()
         c2[j] += dc
         J[:, j] = (bstar_from_c(c2, state.b_total) - bs) / dc
-    sv = np.linalg.svd(J, compute_uv=False)
-    ratio = float(sv[1] / max(sv[0], 1e-30)) if len(sv) > 1 else 0.0
-    off = float(np.linalg.norm(J - np.diag(np.diag(J)))
-                / max(np.linalg.norm(J), 1e-30))
     c_over_b = float(c.sum()) / state.b_total
+    mu = float(max(U_STAR, c_over_b))
+    res = J - (1.0 / mu) * np.eye(n)
+    sv = np.linalg.svd(J, compute_uv=False)
+    svr = np.linalg.svd(res, compute_uv=False)
+    rank1_ratio = (float(svr[1] / max(svr[0], 1e-30))
+                   if len(svr) > 1 else 0.0)
     return dict(
-        d1_sigma_ratio=ratio,
-        d1_offdiag=off,
-        mu=float(max(U_STAR, c_over_b)),
+        d1_sigma_ratio=rank1_ratio,
+        d1_offdiag=float(np.linalg.norm(res)
+                         / max(np.linalg.norm(J), 1e-30)),
+        mu=mu,
         c_sum_over_B=c_over_b,
         tier="budget" if c_over_b > U_STAR else "anchor",
     )
 
 
+def _g_row(state, a, r):
+    """g_i = R_avail_i/(rho_i+eps)，r 冻结；g_i 只依赖行 a_i·。"""
+    wgt = a * state.dem[None, :]
+    bsh = state.b[:, None] * wgt / np.maximum(
+        wgt.sum(axis=1, keepdims=True), 1e-9)
+    Rf = bsh * r
+    A = (a * Rf).sum(axis=1)
+    scale = np.minimum(1.0, state.bh_cap / np.maximum(A, 1e-9))
+    Ra = A * scale
+    rho = a @ state.dem
+    return Ra / (rho + 1e-3)
+
+
 def d2_metrics(state, rng, n_probe=None):
-    """D2：关联耦合项的随机化谱估计与谱范数/谱半径估计。"""
+    """D2：数值 Jv 与 D_col/L/E 三部分的能量、L 的秩 n 谱断崖。"""
     n, K = state.a.shape
-    l = int(n_probe or min(2 * n + 10, 60))
+    l = int(n_probe or min(4 * n + 20, 120))
     V = rng.normal(size=(n, K, l))
     V /= np.maximum(
         np.linalg.norm(V.reshape(n * K, l), axis=0, keepdims=True), 1e-30)
-    base = assoc_step(state, state.a)[0]
+    base, r, R, R_avail, rho, u, p = assoc_step(state, state.a)
+
+    g = 10.0 ** (state.G_db / 10.0)
+    P = state.p * 10.0 ** (24.0 / 10.0)
+    sig = P[:, None] * g
+    I = state.n0_lin + (state.a * sig).sum(axis=0)
+    D = np.maximum(I[None, :] - state.a * sig, 1e-30)
+    I = np.maximum(I, 1e-30)
+    g0 = _g_row(state, state.a, r)
+
     eps = 1e-6
     JVs = np.empty((n, K, l))
-    Y = np.empty((n, K, l))
+    DVs = np.empty((n, K, l))
+    LVs = np.empty((n, K, l))
+    EVs = np.empty((n, K, l))
     for i in range(l):
-        ap = state.a + eps * V[:, :, i]
-        JVs[:, :, i] = (assoc_step(state, ap)[0] - base) / eps
-        Y[:, :, i] = JVs[:, :, i] - (1.0 - 1.0 / TAU) * V[:, :, i]
-    Yf = Y.reshape(n * K, l)
-    sv = np.linalg.svd(Yf, compute_uv=False)
-    s_n = float(sv[n - 1]) if len(sv) >= n else 0.0
-    s_n1 = float(sv[n]) if len(sv) > n else 0.0
-    gap = float(s_n / max(s_n1, 1e-30))
-    jv_norm = np.linalg.norm(JVs.reshape(n * K, l), axis=0)
-    y_norm = np.linalg.norm(Yf, axis=0)
-    coupling = float(np.mean(y_norm / np.maximum(jv_norm, 1e-30)))
-    La = float(np.max(jv_norm))  # V 列已归一化
+        v = V[:, :, i]
+        JVs[:, :, i] = (assoc_step(state, state.a + eps * v)[0] - base) / eps
 
-    # 谱半径：对 J 做幂迭代（D3 用谱半径，A6 用谱范数上界）
+        # D_col = (1-1/tau)I + (1/tau)*alpha*S*(dr/da)
+        s = (sig * v).sum(axis=0)
+        y = (np.log2(np.e)) * (s[None, :] / I[None, :]
+                               - (s[None, :] - sig * v) / D)
+        DV = (1.0 - 1.0 / TAU) * v + (1.0 / TAU) * ALPHA_ASSOC * softmax_apply(p, y)
+        DVs[:, :, i] = DV
+
+        # L = (1/tau)*kappa*S*G_row；G_row 行局部，一次行扰动即可
+        g1 = _g_row(state, state.a + eps * v, r)
+        Gv = ((g1 - g0) / eps)[:, None] * np.ones((1, K))
+        LV = (1.0 / TAU) * KAPPA * softmax_apply(p, Gv)
+        LVs[:, :, i] = LV
+
+        EVs[:, :, i] = JVs[:, :, i] - DV - LV
+
+    jv = np.linalg.norm(JVs.reshape(n * K, l), axis=0)
+    dv = np.linalg.norm(DVs.reshape(n * K, l), axis=0)
+    lv = np.linalg.norm(LVs.reshape(n * K, l), axis=0)
+    ev = np.linalg.norm(EVs.reshape(n * K, l), axis=0)
+    svL = np.linalg.svd(LVs.reshape(n * K, l), compute_uv=False)
+    gapL = float(svL[n - 1] / max(svL[n], 1e-30)) if len(svL) > n else 0.0
+
+    # 谱半径：对完整 J 做幂迭代（D3 用谱半径；A6 用谱范数下界）
     v = rng.normal(size=(n, K))
     v /= max(np.linalg.norm(v), 1e-30)
-    rho = 0.0
-    for _ in range(20):
-        jv = (assoc_step(state, state.a + eps * v)[0] - base) / eps
-        nv = float(np.linalg.norm(jv))
+    rho_pow = 0.0
+    for _ in range(50):
+        jv_vec = (assoc_step(state, state.a + eps * v)[0] - base) / eps
+        nv = float(np.linalg.norm(jv_vec))
         if nv <= 0:
             break
-        rho = nv
-        v = jv / nv
+        rho_pow = nv
+        v = jv_vec / nv
     return dict(
-        d2_sigma_n=s_n,
-        d2_sigma_n1=s_n1,
-        d2_gap_ratio=gap,
-        d2_coupling_energy=coupling,
-        La=La,
-        rho_a_power=float(rho),
+        d2_dcol_energy=float(np.mean(dv / np.maximum(jv, 1e-30))),
+        d2_L_energy=float(np.mean(lv / np.maximum(jv, 1e-30))),
+        d2_E_energy=float(np.mean(ev / np.maximum(jv, 1e-30))),
+        d2_E_over_L=float(np.mean(ev / np.maximum(lv, 1e-30))),
+        d2_gap_L=gapL,
+        d2_L_rank=n,
+        La_probe=float(np.max(jv)),
+        rho_a_power=float(rho_pow),
         d2_n_probe=l,
     )
 
 
-def d3_metrics(env, field, state, rng, n_probe=10):
-    """D3：执行器谱半径、X* 对关联的敏感度、联合压缩因子。"""
+def d3_metrics(env, field, state, rng, n_probe=20):
+    """D3：执行器谱半径、连续目标（b/π）对关联的敏感度、联合压缩因子。
+
+    位置质心在 argmax 归属切换处是离散跳变，单列为 partition_switch_rate，
+    不计入连续 L_Xa；跳变由定理的 δ_part 项处理。
+    """
     rho_X = float(np.max(np.abs(1.0 - LAMBDA)))
     a0 = env.assoc.copy()
     u0 = env.u.copy()
     rho0 = env.rho.copy()
     ra0 = env.R_avail.copy()
-    X0 = field.target_state(env)
+    dom0 = a0.argmax(axis=0)
+    X0 = field.target_state(env)[:, :2]  # b, π（p 恒 1；位置另计）
     vals = []
+    switched = 0
     eps = 1e-6
     for _ in range(n_probe):
         v = rng.normal(size=state.a.shape)
@@ -192,13 +247,15 @@ def d3_metrics(env, field, state, rng, n_probe=10):
         if nv <= 0:
             continue
         v /= nv
-        ap = state.a + eps * v
-        an, r, R2, R_avail, rho, u = assoc_step(state, ap)
+        an, r, R2, R_avail, rho, u, _p = assoc_step(state, state.a + eps * v)
+        if not np.array_equal(an.argmax(axis=0), dom0):
+            switched += 1
+            continue
         env.assoc = an
         env.u = u
         env.rho = rho
         env.R_avail = R_avail
-        X1 = field.target_state(env)
+        X1 = field.target_state(env)[:, :2]
         vals.append(float(np.linalg.norm(X1 - X0) / eps))
     env.assoc = a0
     env.u = u0
@@ -209,6 +266,7 @@ def d3_metrics(env, field, state, rng, n_probe=10):
         rho_X=rho_X,
         L_Xa_median=float(np.median(vals)),
         L_Xa_max=float(np.max(vals)),
+        partition_switch_rate=float(switched / max(n_probe, 1)),
     )
 
 
@@ -247,19 +305,27 @@ def audit_one(n, scene, seed, snapshots=SNAPSHOTS):
                 max_cB=float(np.max(st.rho / np.maximum(st.bh_cap, 1e-9))),
                 d1_sigma_ratio=m1["d1_sigma_ratio"],
                 d1_offdiag=m1["d1_offdiag"],
-                d2_sigma_n=m2["d2_sigma_n"],
-                d2_sigma_n1=m2["d2_sigma_n1"],
-                d2_gap_ratio=m2["d2_gap_ratio"],
-                d2_coupling_energy=m2["d2_coupling_energy"],
-                La=m2["La"], rho_a=rho_a, rho_X=m3["rho_X"],
+                d2_dcol_energy=m2["d2_dcol_energy"],
+                d2_L_energy=m2["d2_L_energy"],
+                d2_E_energy=m2["d2_E_energy"],
+                d2_E_over_L=m2["d2_E_over_L"],
+                d2_gap_L=m2["d2_gap_L"],
+                d2_L_rank=m2["d2_L_rank"],
+                La=m2["La_probe"], La_probe=m2["La_probe"],
+                rho_a=rho_a, rho_X=m3["rho_X"],
                 L_Xa_median=m3["L_Xa_median"], L_Xa_max=m3["L_Xa_max"],
+                partition_switch_rate=m3["partition_switch_rate"],
                 rho_J=rho_J,
+                rho_min=float(np.min(st.rho)),
+                rho_p01=float(np.percentile(st.rho, 1)),
+                u_min=float(np.min(st.u)),
+                g_max=float(np.max(g)),
                 load_gap=float(np.max(st.u) - np.min(st.u)),
                 load_std=float(np.std(st.u)),
                 meanfield_residual=float(np.std(g) / max(np.mean(g), 1e-12)),
                 u_mean=float(np.mean(st.u)),
                 n_dead=int((st.u > 5).sum()),
-                note=f"L_Xa_max={m3['L_Xa_max']:.6g};w={w:g}",
+                note=f"w={w:g};d2_probe={m2['d2_n_probe']}",
             ))
     return rows
 
