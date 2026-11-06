@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: theory-audit
+          ref: ${{ github.ref_name }}
 
       - uses: actions/setup-python@v5
         with:

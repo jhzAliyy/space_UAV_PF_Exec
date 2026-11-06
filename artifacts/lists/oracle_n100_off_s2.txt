@@ -1,2 +1,0 @@
-tuned 5 2 burst 1 0.0 main 100 base_tuned_n100_burst_s2
-tuned 5 2 flow 1 0.0 main 100 base_tuned_n100_flow_s2

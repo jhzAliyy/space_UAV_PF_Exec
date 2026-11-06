@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from uav_env import (ACT_LOW, ACT_HIGH, DB_MIN, DXY_MAX, DPI_MIN, EPISODE_LEN)
+from uav_env import (STEP_LOW, STEP_HIGH, DB_MIN, DXY_MAX, DPI_MIN, EPISODE_LEN)
 
 # Jiang Table II（逐项照抄）：接入信道带宽 180 kHz、回传 100 MHz、
 # 接入载频 2 GHz、发射功率 30 dBm、噪声谱密度 -174 dBm/Hz、
@@ -123,7 +123,7 @@ class RandomCtrl:
         pass
 
     def act(self, env, deterministic: bool = True):
-        d = self.rng.uniform(ACT_LOW[None, :], ACT_HIGH[None, :],
+        d = self.rng.uniform(STEP_LOW[None, :], STEP_HIGH[None, :],
                              size=(env.n_uav, 5)).astype(np.float32)
         return d, d.copy(), np.zeros(env.n_uav)
 
@@ -275,10 +275,18 @@ def _jiang_gains(env, pos: np.ndarray) -> np.ndarray:
 
 
 def _jiang_snr(env, g: np.ndarray) -> np.ndarray:
-    p_mw = 10.0 ** (JIANG_P_DBM / 10.0)
-    n0_mw = 10.0 ** ((JIANG_N0_PSD_DBM_HZ
-                      + 10.0 * np.log10(JIANG_BA_MHZ * 1e6)) / 10.0)
-    return p_mw * g / n0_mw
+    """Jiang 规划用的 SNR：与项目 env 的发射功率/噪声同口径。
+
+    2026-11-02 基线修复：原实现固定 30 dBm、并按 180 kHz 另算噪声
+    （-174 dBm/Hz + 10log10(180k)），而 env 实际执行的是
+    `env.p * 10^(P_REF_DBM/10)`、噪声 `env._n0_lin`（-104 dBm）。
+    规划与执行不一致会让 PSO 朝错误的 SNR 区域布站。现直接读 env 的
+    实际功率与噪声；Jiang 原生 30 dBm 在项目 p 域不可达（P_REF=24 dBm，
+    p≤2 → 27 dBm），按 env 可达功率评估。
+    """
+    p_mw = (np.asarray(env.p, dtype=np.float64)
+            * 10.0 ** (float(env.p_ref_dbm) / 10.0))[:, None]
+    return p_mw * g / float(env._n0_lin)
 
 
 def _jiang_assoc(lam: np.ndarray, rate: np.ndarray, bh_cap: np.ndarray,
@@ -420,11 +428,12 @@ class JiangCtrl:
     def act(self, env, deterministic: bool = True):
         if not self._scaled:
             self._scaled = True
-            # 规模适配：论文 |A|=5，本项目到 200 架。PSO 是布站启发式，
-            # 大规模下按比例降粒子/迭代，方法与判据不变（04 §七 规模限制）。
-            if env.n_uav > 60:
-                self.n_particles, self.tmax1, self.tmax2 = 6, 15, 15
-            elif env.n_uav > 12:
+            # 规模适配：论文 |A|=5，本项目到 200 架。2026-11-02 基线修复：
+            # 原实现对 n>60 砍到 6 粒子 × 15 迭代（n12 是 20×100），
+            # 等于在最大规模上把搜索预算压到 4.5%，是明确的稻草人。
+            # 现统一为 12 粒子 × 40 迭代（与 n30 同档），不再随规模继续降；
+            # 计算量仍低于 n12 的 20×100，但搜索预算不再随 n 塌缩。
+            if env.n_uav > 12:
                 self.n_particles, self.tmax1, self.tmax2 = 12, 40, 40
         if self.gbest is None or (env.t % self.reopt == 0):
             self._optimize(env)

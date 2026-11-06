@@ -33,7 +33,7 @@ import torch.nn as nn
 sys.stdout.reconfigure(encoding="utf-8")
 from uav_env import (OBS_DIM, EPISODE_LEN, DXY_MAX, P_REF_DBM, N0_DBM, norm_obs,  # noqa: E402
                     DEMAND_SCALE_ANCHOR, CKPT_EVERY, TOTAL_ROLLOUTS,
-                    EARLY_WIN, EARLY_THR, baseline_scene)
+                    EARLY_SHORT, EARLY_WIN, EARLY_THR, baseline_scene)
 from uav_env import UAVEnvV3                                      # noqa: E402
 from uav_env import (decode_ddp, collect_nb, nb_index,  # noqa: E402
                           K_NB_FIX)
@@ -440,16 +440,16 @@ def train(mode: str, tau: float, seed: int,
                   f"q={qm_v:.2f} {(time.time()-t0)/60:.1f}min", flush=True)
         ret_curve.append(float(np.mean(rets[-20 * ROLLOUT:])))
         # 早停：滑动判定窗 200 回合；只解除硬回合数下限，判据不变。
-        if ((ro + 1) % 25 == 0 and len(ret_curve) >= 2 * EARLY_WIN):
-            m2 = float(np.mean(ret_curve[-EARLY_WIN:]))
-            m1 = float(np.mean(ret_curve[-2 * EARLY_WIN:-EARLY_WIN]))
-            best_w = max(float(np.mean(ret_curve[i:i + EARLY_WIN]))
-                         for i in range(0, len(ret_curve) - EARLY_WIN + 1))
-            if (abs(m2 - m1) <= EARLY_THR * max(abs(m1), 1e-6)
-                    and m2 >= best_w - EARLY_THR * max(abs(best_w), 1e-6)):
-                print(f"[{task}] 早停@{ro+1}轮 窗口改善|{m2:.4f}-{m1:.4f}|"
-                      f"<{EARLY_THR:.1%} 且达历史最佳窗口 {best_w:.4f}",
-                      flush=True)
+        if ((ro + 1) % 25 == 0
+                and len(rets) >= 2 * EARLY_WIN * ROLLOUT):
+            short = float(np.mean(rets[-EARLY_SHORT * ROLLOUT:]))
+            long = float(np.mean(rets[-EARLY_WIN * ROLLOUT:]))
+            diff = short - long
+            band = EARLY_THR * max(abs(long), 1e-6)
+            if abs(diff) <= band:
+                print(f"[{task}] 早停@{ro+1}轮 近{EARLY_SHORT}轮={short:.4f} "
+                      f"近{EARLY_WIN}轮={long:.4f} 差={diff:+.4f} "
+                      f"|差|<{EARLY_THR:.1%} 无提升", flush=True)
                 torch.save({"policy": actor.state_dict(),
                             "critic": critic.state_dict(),
                             "opt_a": opt_a.state_dict(),

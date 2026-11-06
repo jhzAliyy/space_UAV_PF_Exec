@@ -1,2 +1,0 @@
-tuned 5 1 burst 1 0.0 main 100 oracle_tuned_n100_burst_s1
-tuned 5 1 flow 1 0.0 main 100 oracle_tuned_n100_flow_s1
