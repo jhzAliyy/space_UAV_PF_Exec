@@ -52,7 +52,8 @@ EVAL_STEPS = (2000, 3000, 4000)
 COV_DB = 5.0                       # 覆盖判定门限（SINR ≥ 5 dB，照旧）
 
 # 场族别名 → 执行器注册键
-FIELD_ALIAS = {"field": "max", "tuned": "tuned", "learned": "net"}
+FIELD_ALIAS = {"field": "max", "tuned": "tuned", "learned": "net",
+               "a2a": "fparam"}
 BASELINES = ("rand", "fixed", "greedy", "rr", "shen", "jiang")
 SOTA_ARMS = ("ddpga", "dqnm", "mfdqn", "tmarl")
 
@@ -101,9 +102,10 @@ class Controller:
         if algo in FIELD_ALIAS or algo in EXECUTORS:
             key = FIELD_ALIAS.get(algo, algo)
             ex = EXECUTORS[key]()
-            if key == "net":                     # learned 臂：加载 ckpt
+            if key in ("net", "fparam"):         # learned/a2a 臂：加载 ckpt
                 task = ckpt_task or run_name(
-                    "learned", 5.0, seed, env.scene, env.n_uav, "main")
+                    "a2a" if key == "fparam" else "learned",
+                    5.0, seed, env.scene, env.n_uav, "main")
                 ex.net = load_net(task)
             f = Field()
 

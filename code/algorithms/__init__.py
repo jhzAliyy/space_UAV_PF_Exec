@@ -49,7 +49,7 @@ class _BaselineAlg(BaseAlg):
 ALGOS: dict[str, type[BaseAlg]] = {
     "field": _field_with("max"),      # 真纯场：方向×恒满速
     "tuned": _field_with("tuned"),    # 调优遗迹基线（对照）
-    "learned": _field_with("net"),    # 学习执行器（模长+偏转角）
+    "learned": _field_with("net"),    # 学习执行器（逐维增益 η，方向恒由场给定）
     "ddpga": _sota("ddpga"),          # SOTA 对照（Cheng TIM 2024）
     "dqnm": _sota("dqnm"),            # SOTA 对照（Rizvi TMLCN 2025）
     "mfdqn": _sota("mfdqn"),          # SOTA 对照（Song TWC 2025）

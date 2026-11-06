@@ -37,7 +37,7 @@ CKPT_EVERY = 25
 TOTAL_ROLLOUTS = 1200
 EARLY_WIN = 200
 EARLY_SHORT = 10
-EARLY_THR = 0.005
+EARLY_THR = float(__import__("os").environ.get("PF_EARLY_THR", "0.005"))
 
 # ---- 真实全局量退化（训练评估同口径；开关 PF_REAL_OBS=1） ----
 REAL_OBS_EVERY = 5       # 0.5 s 刷新
@@ -47,3 +47,10 @@ REAL_OBS_BLUR_M = 10.0   # 用户位置测量噪声
 #      任何主方法。真纯场=恒满速；学习版=网络出幅度） ----
 TUNED_RELAX = 0.2        # 带宽维 20% 力度
 TUNED_PI_STEP = 0.05     # 价格维次梯度步长
+
+# ---- 乘性执行器（2026-11-03 三版综合，桌面版形态复活） ----
+# d = η ⊙ (x* − x)，η = exp(±ETA_AMP·tanh) 硬界；bias=0 起步 η≡1 = 纯势场。
+# PF_RELAX：b/π 维定点迭代松弛（桌面版实测：1.0 直接跳闭式解会与关联
+# 惯性打架，0.2 平滑），随乘性参数化一并回归。
+ETA_AMP = 0.7            # η ∈ [0.4966, 2.0138]（桌面版数学口径）
+PF_RELAX = 0.2

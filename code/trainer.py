@@ -32,10 +32,17 @@ from config import (CKPT_EVERY, EARLY_SHORT, EARLY_THR, EARLY_WIN,
                     EPISODE_LEN, REAL_OBS_BLUR_M, REAL_OBS_EVERY,
                     TOTAL_ROLLOUTS)
 from uav_env import CKPT_ROOT
-from executors.net_executor import (Net, ProjResBlock, WIDTHS, compose,
-                                    make_obs, OBS_DIM, OUT_DIM)
+from executors.net_executor import (Net, ProjResBlock, WIDTHS, make_obs,
+                                    logits_to_eta, OBS_DIM, OUT_DIM,
+                                    ETA_MIN, ETA_MAX)
+if os.environ.get("PF_EXECUTOR", "net") == "fparam":   # A2a 场参数化（P4）
+    from executors.fparam_executor import execute as execute
+else:
+    from executors.net_executor import execute
 
 REAL_OBS = os.environ.get("PF_REAL_OBS", "") == "1"
+EXEC_SEG = ("a2a" if os.environ.get("PF_EXECUTOR", "") == "fparam"
+            else "learned")            # ckpt 名段（fparam 模式区分存档）
 ROLLOUT_LEN_DEFAULT = 256          # 日志/统计窗（旧管线口径；非回合长）
 
 
@@ -82,9 +89,10 @@ def soft_update(net, target, tau: float) -> None:
         pt.data.mul_(1.0 - tau).add_(tau * p.data)
 
 
-def _m_phi(u: torch.Tensor):
-    """logit 域 6 维 → 执行域 (m, φ)。"""
-    return torch.sigmoid(u[:, :5]), torch.pi * torch.tanh(u[:, 5])
+def _eta_n(u: torch.Tensor):
+    """logit 域 5 维 → 归一化 η ∈ [0,1]（critic 输入域，桌面版口径）。"""
+    eta = torch.exp(0.7 * torch.tanh(u))
+    return (eta - ETA_MIN) / (ETA_MAX - ETA_MIN)
 
 
 class Replay:
@@ -127,7 +135,7 @@ def run_name(args) -> str:
         parts.append(f"anch{args.anchor:g}")
     if args.n != 12:
         parts.append(f"n{args.n}")
-    parts.append("learned")
+    parts.append(EXEC_SEG)
     parts.append(f"tau{int(args.tau)}_s{args.seed}")
     if chan != "main":
         parts.append(chan)
@@ -156,11 +164,11 @@ class Trainer:
                          args.seed)
         self.task = args.task or run_name(args)
         if REAL_OBS and not args.task:
-            self.task = self.task.replace("_learned_", "_learned_real_")
+            self.task = self.task.replace(f"_{EXEC_SEG}_", f"_{EXEC_SEG}_real_")
         self.tdir = CKPT_ROOT / self.task
         self.tdir.mkdir(parents=True, exist_ok=True)
 
-    # ---- 采集：logit 域 → 执行域（探索噪声照旧 0.3，预热 U(−2,2)） ----
+    # ---- 采集：logit 域 → η 域（探索噪声照旧 0.3，预热 U(−2,2)） ----
     def act_exec(self, env, reading, rng, warmup=False, expl=0.3):
         obs = make_obs(env, reading)
         if warmup:                            # 预热：logit 域均匀采样（照旧）
@@ -171,8 +179,8 @@ class Trainer:
                 if expl > 0.0:                # 采集探索噪声（ctrl_rng 独立流）
                     u = (u + expl * self.ctrl_rng.standard_normal(
                         u.shape)).astype(np.float32)
-        m, phi = _m_phi(torch.as_tensor(u, dtype=torch.float32))
-        return m.numpy(), phi.numpy(), obs
+        eta_n = _eta_n(torch.as_tensor(u, dtype=torch.float32))
+        return eta_n.numpy(), obs
 
     def run(self, env):
         a = self.args
@@ -204,7 +212,7 @@ class Trainer:
                      encoding="utf-8")
         w = csv.writer(log_f)
         w.writerow(["rollout", "env_steps", "ret_rollout", "mean_ret20",
-                    "c_loss", "q_mean", "m_mean", "m_absmin", "phi_std",
+                    "c_loss", "q_mean", "eta_mean", "eta_min", "eta_max",
                     "learn_steps", "seconds",
                     "var_u", "u_mean", "sum_t", "n_over"])
         log_f.flush()
@@ -214,8 +222,7 @@ class Trainer:
         reading = get_reading()
         rets: list = []                         # 逐步奖励（(N,) 数组）
         ret_hist: list[float] = []              # 逐轮均值（早停用）
-        m = np.full((env.n_uav, 5), np.nan)
-        phi = np.zeros(env.n_uav)
+        eta = np.full((env.n_uav, 5), np.nan)   # 最近一步 η_n（日志用）
         n_learn = 0
         n_step = 0
         self.n_bad = 0
@@ -225,15 +232,17 @@ class Trainer:
             n_learn = 0
             for _t in range(rlen):
                 # 照旧：每步一次采集（预热域均匀 / actor+探索噪声）
-                m, phi, o = self.act_exec(
+                eta_n, o = self.act_exec(
                     env, reading, rng,
                     warmup=n_step < a.learning_starts,
                     expl=a.exploration_noise)
-                act = compose(m, phi, reading)
+                eta = eta_n                          # 日志变量回填
+                eta_real = eta_n * (ETA_MAX - ETA_MIN) + ETA_MIN
+                act = execute(eta_real, reading)
                 _, r, done, _ = env.step(act)
                 n_reading = get_reading()
                 no = make_obs(env, n_reading)
-                ex_a = np.concatenate([m, phi[:, None]], axis=1)
+                ex_a = eta_n
                 # 护栏照旧：非有限转移坚决不入池
                 if (np.isfinite(no).all() and np.isfinite(r).all()
                         and np.isfinite(ex_a).all() and np.isfinite(o).all()):
@@ -263,7 +272,7 @@ class Trainer:
             self._save_ckpt_latest()
             if (ro + 1) % CKPT_EVERY == 0 or ro + 1 == total:
                 self._save_progress(ro + 1, total, rlen, rets, n_learn,
-                                    cl_v, qm_v, m, phi, t0, win)
+                                    cl_v, qm_v, eta, t0, win)
                 (self.tdir / "snaps").mkdir(exist_ok=True)
                 torch.save(self.actor.state_dict(),
                            self.tdir / "snaps" / f"snap_r{ro + 1}.pt")
@@ -271,8 +280,8 @@ class Trainer:
                         f"{np.mean(rets[-rlen:]):.4f}",
                         f"{np.mean(rets[-20 * rlen:]):.4f}",
                         f"{cl_v:.5f}", f"{qm_v:.3f}",
-                        f"{np.mean(m):.3f}", f"{np.min(m):.3f}",
-                        f"{np.std(phi):.3f}", n_learn,
+                        f"{np.mean(eta):.3f}", f"{np.min(eta):.3f}",
+                        f"{np.max(eta):.3f}", n_learn,
                         f"{time.time() - t0:.1f}",
                         f"{win('var_u', rlen):.6f}",
                         f"{win('u_mean', rlen):.4f}",
@@ -281,8 +290,8 @@ class Trainer:
             log_f.flush()
             print(f"[{self.task}] {ro+1}/{total} "
                   f"ret={np.mean(rets[-20 * rlen:]):.3f} cl={cl_v:.4f} "
-                  f"q={qm_v:.2f} m={np.mean(m):.3f} "
-                  f"m_min={np.min(m):.2f} learn={n_learn} "
+                  f"q={qm_v:.2f} eta={np.mean(eta):.3f} "
+                  f"eta_min={np.min(eta):.2f} learn={n_learn} "
                   f"{(time.time() - t0) / 60:.1f}min", flush=True)
             ret_hist.append(float(np.mean(rets[-rlen:])))
             # 早停照旧：每 25 轮查，|近S−近W| ≤ thr×|近W|（双向带，崩溃不停）
@@ -317,8 +326,7 @@ class Trainer:
             # 目标策略平滑照旧：(randn×σ).clamp(±c)，logit 域
             u = u + torch.clamp(a.target_noise * torch.randn_like(u),
                                 -a.noise_clip, a.noise_clip)
-            mt, phit = _m_phi(u)
-            at = torch.cat([mt, phit[:, None]], dim=1)
+            at = _eta_n(u)
             q = torch.min(self.c1t(no, at), self.c2t(no, at))
             y = r + a.gamma * q[:, 0] * (1.0 - d)
         q1, q2 = self.c1(o, ac)[:, 0], self.c2(o, ac)[:, 0]
@@ -331,8 +339,7 @@ class Trainer:
         qm = float(q1.detach().mean())
         if self._n_step % a.policy_freq == 0:    # 照旧：按环境步取模
             ua = self.actor(o)
-            ma, pha = _m_phi(ua)
-            aa = torch.cat([ma, pha[:, None]], dim=1)
+            aa = _eta_n(ua)
             al = -self.c1(o, aa)[:, 0].mean()
             self.opt_a.zero_grad()
             al.backward()
@@ -353,16 +360,16 @@ class Trainer:
                    self.tdir / "latest.pt")
 
     def _save_progress(self, ro, total, rlen, rets, n_learn, cl_v, qm_v,
-                       m, phi, t0, win):
+                       eta, t0, win):
         obj = {
             "task": self.task, "rollout": ro, "total": total,
             "env_steps": ro * rlen,
             "mean_ret_recent": float(np.mean(rets[-EPISODE_LEN:])),
             "c_loss": round(cl_v, 5), "q_mean": round(qm_v, 3),
             "learn_steps": n_learn,
-            "m_mean": round(float(np.mean(m)), 4),
-            "m_absmin": round(float(np.min(m)), 4),
-            "phi_std": round(float(np.std(phi)), 4),
+            "eta_mean": round(float(np.mean(eta)), 4),
+            "eta_min": round(float(np.min(eta)), 4),
+            "eta_max": round(float(np.max(eta)), 4),
             "n_bad_transitions": self.n_bad,
             "var_u": round(win("var_u", rlen), 6),
             "u_mean": round(win("u_mean", rlen), 4),
