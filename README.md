@@ -38,7 +38,7 @@ code/                       统一入口、环境、场、执行器、训练器�
   ddpga.py dqnm.py mfdqn.py tmarl.py   外部基线
   crowd_sfm.cpp fastlink3.c           C 核源码
   shim/                      C 核编译所需头文件
-deps/                       编译依赖（lightsfm 头文件、MuJoCo-gym 源码/资产）
+deps/                       编译依赖（lightsfm 头文件、MuJoCo-gym 源码/资产、QuaDRiGa 源）
 docs/                       使用说明（00 环境、06 代码结构、08 理论核验）
 artifacts/theory_audit/     理论核验脚本与三级说明（结果不入库）
 .github/workflows/          训练/评估/核验工作流
@@ -92,6 +92,10 @@ wget https://github.com/jhzAliyy/space4-run/releases/download/chan-tables/chan_1
 ```
 
 训练权重/评估 CSV 按实验格归档，不在本仓库。
+
+信道表生成工具：`code/channel_table_gen.py`（依赖 `code/channel_model.py`、
+`code/gen_sf.m` 与 `deps/QuaDRiGa_src`；无 Octave 时自动走纯 Python 谱方法，
+仍可生成）。命令见 [docs/00_环境与构建.md](docs/00_环境与构建.md) §3.1。
 
 ## 5. 运行
 
