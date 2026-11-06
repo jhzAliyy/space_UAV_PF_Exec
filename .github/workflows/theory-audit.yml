@@ -46,10 +46,9 @@ jobs:
       - name: channel tables
         run: |
           mkdir -p env_data/channel
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/chan-tables/chan_12_uma_2ghz.npz -O env_data/channel/chan_12_uma_2ghz.npz
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/chan-tables/chan_30_uma_2ghz.npz -O env_data/channel/chan_30_uma_2ghz.npz
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/chan-tables/chan_60_uma_2ghz.npz -O env_data/channel/chan_60_uma_2ghz.npz
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/chan-tables/chan_100_uma_2ghz.npz -O env_data/channel/chan_100_uma_2ghz.npz
+          N=${{ matrix.n }}
+          if [ "$N" -le 12 ]; then TAG=12; else TAG=$N; fi
+          wget -q https://github.com/jhzAliyy/space4-run/releases/download/chan-tables/chan_${TAG}_uma_2ghz.npz -O env_data/channel/chan_${TAG}_uma_2ghz.npz
           ls -lh env_data/channel/
 
       - name: build native libs
