@@ -201,17 +201,37 @@ def d2_metrics(state, rng, n_probe=None):
     svL = np.linalg.svd(LVs.reshape(n * K, l), compute_uv=False)
     gapL = float(svL[n - 1] / max(svL[n], 1e-30)) if len(svL) > n else 0.0
 
-    # 谱半径：对完整 J 做幂迭代（D3 用谱半径；A6 用谱范数下界）
-    v = rng.normal(size=(n, K))
-    v /= max(np.linalg.norm(v), 1e-30)
-    rho_pow = 0.0
-    for _ in range(50):
-        jv_vec = (assoc_step(state, state.a + eps * v)[0] - base) / eps
-        nv = float(np.linalg.norm(jv_vec))
-        if nv <= 0:
-            break
-        rho_pow = nv
-        v = jv_vec / nv
+    # 谱半径：ARPACK（scipy）优先；失败回退幂迭代。
+    # 非正规 J 的幂迭代会被瞬态增长污染，ARPACK 直接求特征值。
+    N = n * K
+
+    def _matvec(vec):
+        vv = np.asarray(vec, dtype=np.float64).reshape(n, K)
+        return ((assoc_step(state, state.a + eps * vv)[0] - base)
+                / eps).reshape(-1)
+
+    rho_a = None
+    method = "power"
+    try:
+        from scipy.sparse.linalg import LinearOperator, eigs
+        op = LinearOperator((N, N), matvec=_matvec, dtype=np.float64)
+        vals = eigs(op, k=1, which="LM", return_eigenvectors=False,
+                    maxiter=200, tol=1e-3)
+        rho_a = float(np.max(np.abs(vals)))
+        method = "arpack"
+    except Exception:
+        v = rng.normal(size=(n, K))
+        v /= max(np.linalg.norm(v), 1e-30)
+        rho_pow = 0.0
+        for _ in range(50):
+            jv_vec = _matvec(v.ravel()).reshape(n, K)
+            nv = float(np.linalg.norm(jv_vec))
+            if nv <= 0:
+                break
+            rho_pow = nv
+            v = jv_vec / nv
+        rho_a = float(rho_pow)
+
     return dict(
         d2_dcol_energy=float(np.mean(dv / np.maximum(jv, 1e-30))),
         d2_L_energy=float(np.mean(lv / np.maximum(jv, 1e-30))),
@@ -220,7 +240,8 @@ def d2_metrics(state, rng, n_probe=None):
         d2_gap_L=gapL,
         d2_L_rank=n,
         La_probe=float(np.max(jv)),
-        rho_a_power=float(rho_pow),
+        rho_a=float(rho_a),
+        rho_a_method=method,
         d2_n_probe=l,
     )
 
@@ -240,6 +261,7 @@ def d3_metrics(env, field, state, rng, n_probe=20):
     X0 = field.target_state(env)[:, :2]  # b, π（p 恒 1；位置另计）
     vals = []
     switched = 0
+    pathological = 0
     eps = 1e-6
     for _ in range(n_probe):
         v = rng.normal(size=state.a.shape)
@@ -250,6 +272,9 @@ def d3_metrics(env, field, state, rng, n_probe=20):
         an, r, R2, R_avail, rho, u, _p = assoc_step(state, state.a + eps * v)
         if not np.array_equal(an.argmax(axis=0), dom0):
             switched += 1
+            # 不跳过：b/π 目标不依赖 argmax；位置维跳变另计 δ_part
+        if R_avail.min() < 1.0 or u.max() > 10.0:
+            pathological += 1
             continue
         env.assoc = an
         env.u = u
@@ -261,12 +286,14 @@ def d3_metrics(env, field, state, rng, n_probe=20):
     env.u = u0
     env.rho = rho0
     env.R_avail = ra0
-    vals = np.asarray(vals) if vals else np.array([0.0])
+    vals = np.asarray(vals) if vals else np.array([np.nan])
     return dict(
         rho_X=rho_X,
         L_Xa_median=float(np.median(vals)),
         L_Xa_max=float(np.max(vals)),
         partition_switch_rate=float(switched / max(n_probe, 1)),
+        pathological_rate=float(pathological / max(n_probe, 1)),
+        d3_valid_rate=float(len(vals) / max(n_probe, 1)),
     )
 
 
@@ -294,11 +321,13 @@ def audit_one(n, scene, seed, snapshots=SNAPSHOTS):
             m1 = d1_metrics(st)
             m2 = d2_metrics(st, rng)
             m3 = d3_metrics(env, field, st, rng)
-            rho_a = m2["rho_a_power"]
+            rho_a = m2["rho_a"]
             Lxa = m3["L_Xa_median"]
             w = 1.0
-            rho_J = max(rho_a + w * Lxa, m3["rho_X"])
+            rho_J = (max(rho_a + w * Lxa, m3["rho_X"])
+                     if np.isfinite(Lxa) else float("nan"))
             g = st.R_avail / (st.rho + 1e-3)
+            a_entropy = float(np.mean(-(st.a * np.log(st.a + 1e-12)).sum(axis=0)))
             rows.append(dict(
                 n=n, scene=scene, seed=seed, step=t, tier=m1["tier"],
                 mu=m1["mu"], c_sum_over_B=m1["c_sum_over_B"],
@@ -312,14 +341,21 @@ def audit_one(n, scene, seed, snapshots=SNAPSHOTS):
                 d2_gap_L=m2["d2_gap_L"],
                 d2_L_rank=m2["d2_L_rank"],
                 La=m2["La_probe"], La_probe=m2["La_probe"],
-                rho_a=rho_a, rho_X=m3["rho_X"],
+                rho_a=rho_a, rho_a_method=m2["rho_a_method"],
+                rho_X=m3["rho_X"],
                 L_Xa_median=m3["L_Xa_median"], L_Xa_max=m3["L_Xa_max"],
                 partition_switch_rate=m3["partition_switch_rate"],
+                pathological_rate=m3["pathological_rate"],
+                d3_valid_rate=m3["d3_valid_rate"],
                 rho_J=rho_J,
                 rho_min=float(np.min(st.rho)),
                 rho_p01=float(np.percentile(st.rho, 1)),
+                R_avail_min=float(np.min(st.R_avail)),
                 u_min=float(np.min(st.u)),
+                u_max=float(np.max(st.u)),
                 g_max=float(np.max(g)),
+                a_max=float(np.max(st.a)),
+                a_entropy=a_entropy,
                 load_gap=float(np.max(st.u) - np.min(st.u)),
                 load_std=float(np.std(st.u)),
                 meanfield_residual=float(np.std(g) / max(np.mean(g), 1e-12)),
