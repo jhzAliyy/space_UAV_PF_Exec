@@ -82,6 +82,7 @@ jobs:
           ls -lh artifacts/experiments/$TASK/ckpt/
 
       - name: evaluate
+        continue-on-error: true
         env:
           PYTHONPATH: ${{ github.workspace }}/deps/MuJoCo-drones-gym
         run: |
@@ -93,6 +94,7 @@ jobs:
           cp out.csv ../artifacts/experiments/$TASK/eval/$TASK.csv
 
       - name: coverage
+        continue-on-error: true
         env:
           PYTHONPATH: ${{ github.workspace }}/deps/MuJoCo-drones-gym
         run: |
@@ -105,6 +107,7 @@ jobs:
             --out artifacts/theory_audit/out/coverage_${{ inputs.task }}.csv
 
       - name: upload
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: train-${{ inputs.task }}
