@@ -41,7 +41,7 @@ jobs:
           python-version: '3.11'
 
       - name: deps
-        run: pip install -q numpy
+        run: pip install -q numpy scipy
 
       - name: channel tables
         run: |
