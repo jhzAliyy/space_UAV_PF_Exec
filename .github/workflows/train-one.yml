@@ -47,7 +47,7 @@ jobs:
       - name: channel table
         run: |
           mkdir -p env_data/channel
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/chan-tables/chan_${{ inputs.n }}_uma_2ghz.npz \
+          wget -q https://github.com/jhzAliyy/space_UAV_PF_Exec/releases/download/chan-tables/chan_${{ inputs.n }}_uma_2ghz.npz \
             -O env_data/channel/chan_${{ inputs.n }}_uma_2ghz.npz
           ls -lh env_data/channel/
 

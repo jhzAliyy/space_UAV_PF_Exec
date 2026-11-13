@@ -26,9 +26,9 @@ jobs:
         run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
       - name: real code overlay
         run: |
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
+          wget -q https://github.com/jhzAliyy/space_UAV_PF_Exec/releases/download/real-code/code_real.tar.gz
           tar xzf code_real.tar.gz
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/sota_ckpts.tar.gz
+          wget -q https://github.com/jhzAliyy/space_UAV_PF_Exec/releases/download/real-code/sota_ckpts.tar.gz
           tar xzf sota_ckpts.tar.gz
           ls
       - name: build native libs

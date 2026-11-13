@@ -37,15 +37,15 @@ jobs:
         run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
       - name: real code overlay
         run: |
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
+          wget -q https://github.com/jhzAliyy/space_UAV_PF_Exec/releases/download/real-code/code_real.tar.gz
           tar xzf code_real.tar.gz
       - name: channel tables (n60/n100/n200，仓库只带 n12/n30 表)
         run: |
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_60_uma_2ghz.npz -O env_data/channel/chan_60_uma_2ghz.npz
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_100_uma_2ghz.npz -O env_data/channel/chan_100_uma_2ghz.npz
+          wget -q https://github.com/jhzAliyy/space_UAV_PF_Exec/releases/download/real-code/chan_60_uma_2ghz.npz -O env_data/channel/chan_60_uma_2ghz.npz
+          wget -q https://github.com/jhzAliyy/space_UAV_PF_Exec/releases/download/real-code/chan_100_uma_2ghz.npz -O env_data/channel/chan_100_uma_2ghz.npz
           mkdir -p env_data/channel/chan_200_uma_2ghz.d
           for f in gain_db.npy x_edges.npy y_edges.npy meta.json; do
-            wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/$f -O env_data/channel/chan_200_uma_2ghz.d/$f
+            wget -q https://github.com/jhzAliyy/space_UAV_PF_Exec/releases/download/real-code/$f -O env_data/channel/chan_200_uma_2ghz.d/$f
           done
       - name: build native libs
         run: |

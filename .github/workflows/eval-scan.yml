@@ -27,13 +27,13 @@ jobs:
         run: pip install -q numpy gymnasium mujoco torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
       - name: real code overlay
         run: |
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/code_real.tar.gz
+          wget -q https://github.com/jhzAliyy/space_UAV_PF_Exec/releases/download/real-code/code_real.tar.gz
           tar xzf code_real.tar.gz
       - name: scan ckpts (bias-only 常数网络，零训练)
         run: cd code && python make_scan_ckpts.py ../artifacts/experiments
       - name: channel tables (n100，仓库只带 n12/n30 表)
         run: |
-          wget -q https://github.com/jhzAliyy/space4-run/releases/download/real-code/chan_100_uma_2ghz.npz -O env_data/channel/chan_100_uma_2ghz.npz
+          wget -q https://github.com/jhzAliyy/space_UAV_PF_Exec/releases/download/real-code/chan_100_uma_2ghz.npz -O env_data/channel/chan_100_uma_2ghz.npz
       - name: build native libs
         run: |
           cd code

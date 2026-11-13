@@ -87,7 +87,7 @@ Windows 下对应产物为 `crowd_sfm.dll` / `fastlink3.dll`（仓库不提交�
 
 ```bash
 mkdir -p env_data/channel
-wget https://github.com/jhzAliyy/space4-run/releases/download/chan-tables/chan_12_uma_2ghz.npz \
+wget https://github.com/jhzAliyy/space_UAV_PF_Exec/releases/download/chan-tables/chan_12_uma_2ghz.npz \
      -O env_data/channel/chan_12_uma_2ghz.npz
 ```
 
