@@ -1,0 +1,117 @@
+name: train-one
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'task name'
+        required: true
+        default: 'flow_n30_learned_tau5_s0_umi_srand'
+      scene:
+        description: 'flow | burst'
+        required: true
+        default: 'flow'
+      n:
+        description: 'number of UAVs'
+        required: true
+        default: '30'
+      seed:
+        description: 'training seed'
+        required: true
+        default: '0'
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      OMP_NUM_THREADS: "4"
+      PF_TORCH_THREADS: "1"
+      PF_CHANNEL: umi
+      PF_DXY_MAX: "0.5"
+      PF_REAL_OBS: "0"
+      PF_EARLY_THR: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: deps
+        run: |
+          pip install -q numpy gymnasium mujoco torch \
+            --index-url https://download.pytorch.org/whl/cpu \
+            --extra-index-url https://pypi.org/simple
+
+      - name: channel table
+        run: |
+          mkdir -p env_data/channel
+          wget -q https://github.com/jhzAliyy/space_UAV_PF_Exec/releases/download/chan-tables/chan_${{ inputs.n }}_uma_2ghz.npz \
+            -O env_data/channel/chan_${{ inputs.n }}_uma_2ghz.npz
+          ls -lh env_data/channel/
+
+      - name: build native libs
+        run: |
+          cd code
+          g++ -O3 -fopenmp -shared -fPIC -I shim -I ../deps/lightsfm/include \
+            crowd_sfm.cpp -o crowd_sfm.so
+          gcc -O3 -funroll-loops -fopenmp -shared -fPIC fastlink3.c -o fastlink3.so -lm
+          ls -lh crowd_sfm.so fastlink3.so
+
+      - name: train
+        env:
+          PYTHONPATH: ${{ github.workspace }}/deps/MuJoCo-drones-gym
+        run: |
+          cd code
+          timeout 340m python -W ignore run.py \
+            --algo learned \
+            --scene ${{ inputs.scene }} \
+            --n ${{ inputs.n }} \
+            --seed ${{ inputs.seed }} \
+            --task ${{ inputs.task }} \
+            --total-rollouts 1200
+
+      - name: archive ckpt
+        run: |
+          TASK=${{ inputs.task }}
+          mkdir -p artifacts/experiments/$TASK/ckpt
+          cp code/ckpt/$TASK/latest.pt artifacts/experiments/$TASK/ckpt/
+          cp code/ckpt/$TASK/progress.json artifacts/experiments/$TASK/ckpt/ || true
+          cp code/ckpt/$TASK/train_log.csv artifacts/experiments/$TASK/ckpt/ || true
+          ls -lh artifacts/experiments/$TASK/ckpt/
+
+      - name: evaluate
+        continue-on-error: true
+        env:
+          PYTHONPATH: ${{ github.workspace }}/deps/MuJoCo-drones-gym
+        run: |
+          cd code
+          echo "learned 5 ${{ inputs.seed }} ${{ inputs.scene }} 1 0 main ${{ inputs.n }} ${{ inputs.task }}" > /tmp/line.txt
+          python -W ignore evaluate.py /tmp/line.txt out.csv
+          TASK=${{ inputs.task }}
+          mkdir -p ../artifacts/experiments/$TASK/eval
+          cp out.csv ../artifacts/experiments/$TASK/eval/$TASK.csv
+
+      - name: coverage
+        continue-on-error: true
+        env:
+          PYTHONPATH: ${{ github.workspace }}/deps/MuJoCo-drones-gym
+        run: |
+          python artifacts/theory_audit/code/coverage_audit.py \
+            --n ${{ inputs.n }} \
+            --scene ${{ inputs.scene }} \
+            --seed ${{ inputs.seed }} \
+            --task ${{ inputs.task }} \
+            --steps 1500 \
+            --out artifacts/theory_audit/out/coverage_${{ inputs.task }}.csv
+
+      - name: upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: train-${{ inputs.task }}
+          path: |
+            artifacts/experiments/${{ inputs.task }}/
+            artifacts/theory_audit/out/coverage_${{ inputs.task }}.csv
+          retention-days: 7
